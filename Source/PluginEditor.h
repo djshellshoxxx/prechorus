@@ -14,6 +14,7 @@ namespace PCColours
     const juce::Colour neon     { 0xff06b6d4 }; // Cyber cyan
     const juce::Colour hitCol   { 0xfff59e0b }; // Climax amber
     const juce::Colour recCol   { 0xffef4444 }; // Recording ruby red
+    const juce::Colour freezeCol{ 0xff38bdf8 }; // Ice blue
 
     juce::Colour swellColour (float toneHz, float bassCutHz);
 }
@@ -140,21 +141,21 @@ private:
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
 
-    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel;
+    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
                      regenSeedButton { "REGEN" }, helpButton { "?" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
-    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt;
+    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt;
     std::array<juce::TextButton, 8> historySlotButtons;
 
-    // Transport / Sync / PDC
-    juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    // Toggles & Alignment
+    juce::ToggleButton freezeToggle { "FREEZE" }, revConvergeToggle { "REV CONV" }, alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, revConvergeAtt, alignAtt, syncAtt;
     juce::ComboBox syncCombo, rangeCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
 
     WaveformDisplay waveform;
@@ -166,10 +167,10 @@ private:
     std::vector<std::unique_ptr<Knob>> knobs;
 
     // Swarm Voice Engine
-    Knob *kVoiceCount, *kVoiceDensity, *kVoiceAge, *kProgReveal;
+    Knob *kVoiceCount, *kVoiceDensity, *kVoiceAge, *kProgReveal, *kHumanize;
 
-    // Convergence Engine
-    Knob *kTimeSpread, *kTimeConverge, *kPitchSpread, *kDetune, *kPitchConverge, *kPanSpread, *kPanConverge, *kToneConverge;
+    // Convergence Engine & Macro
+    Knob *kMacro, *kTimeSpread, *kTimeConverge, *kPitchSpread, *kDetune, *kPitchConverge, *kPanSpread, *kPanConverge, *kToneConverge;
 
     // Physics
     Knob *kAttraction, *kTurbulence, *kOvershoot, *kOrbit;

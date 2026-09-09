@@ -16,8 +16,14 @@ namespace IDs
     static const juce::String voiceAge = "voiceAge";           // Degrades/darkens earlier voices
     static const juce::String progReveal = "progReveal";       // Progressive reveal: fragments -> full phrase
     static const juce::String voiceDirection = "voiceDir";     // 0: Forward, 1: Reverse, 2: Alternating, 3: Random
+    static const juce::String character = "character";         // 0: Clean Digital, 1: Analog Ensemble, 2: Lo-Fi Choral
+    static const juce::String humanize = "humanize";           // Organic micro-variations
 
-    // Convergence Engine
+    // Convergence Engine & Macros
+    static const juce::String macro = "macro";                 // Global Convergence Macro (scales all dimensions)
+    static const juce::String freeze = "freeze";               // Suspends convergence & holds ensemble
+    static const juce::String revConverge = "revConverge";     // Reverse convergence: unified -> scattered
+    static const juce::String postRelease = "postRelease";     // 0: Cut at Impact, 1: Sustain Chorus, 2: Scatter Out
     static const juce::String timeSpread = "timeSpread";       // How far back voices begin
     static const juce::String timeConverge = "timeConverge";   // How tightly voices align at climax
     static const juce::String pitchSpread = "pitchSpread";     // Pitch offset scatter (+/- semitones)
@@ -42,11 +48,12 @@ namespace IDs
     static const juce::String basscut = "basscut";
     static const juce::String space = "space";
 
-    // Mix & PDC
+    // Mix & PDC & Sequence
     static const juce::String dry = "dry", wet = "wet";
     static const juce::String dryReplace = "dryReplace";       // Swarm replaces or blends with dry hit
     static const juce::String align = "align";                 // PDC downbeat alignment
     static const juce::String sync = "sync", syncLen = "syncLen";
+    static const juce::String sequence = "sequence";           // Target Sequence: 0: Every Note, 1: Beat 1, 2: Every 2 Bars, 3: Every 4 Bars
 
     // Envelopes & Trim
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
@@ -128,6 +135,9 @@ public:
     void setCaptureLock (bool locked);
     bool isCaptureLocked() const { return captureLockState.load(); }
 
+    // Target Confidence Readout
+    float getTargetConfidence() const { return targetConfidence.load(); }
+
     // Swarm Playback & Preview
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
@@ -158,7 +168,7 @@ private:
     // Source Buffers
     juce::AudioFormatManager formatManager;
     juce::CriticalSection sourceLock;
-    juce::AudioBuffer<float> loadedBuffer;       // Loaded file
+    juce::AudioBuffer<float> loadedBuffer;
     double loadedSR = 44100.0;
     juce::File currentFile;
     juce::Array<juce::File> folderFiles;
@@ -179,6 +189,11 @@ private:
     int captureWritePos = 0;
     int captureTargetSamples = 0;
     int captureSilenceCounter = 0;
+
+    // Target Confidence & Transport Recovery
+    std::atomic<float> targetConfidence { 1.0f };
+    juce::int64 lastPlayheadSample = -1;
+    double lastKnownBpm = 120.0;
 
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;

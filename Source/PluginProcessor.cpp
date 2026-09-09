@@ -6,7 +6,6 @@ namespace
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
     const int kSyncBars[]   = { 2, 4, 8, 16 }; // beats: 1/2 bar(2), 1 bar(4), 2 bars(8), 4 bars(16)
 
-    // Musical Scale Quantizer
     float quantizeToScale (float semi, int scaleMode)
     {
         if (scaleMode == 0) return semi; // Chromatic
@@ -49,7 +48,6 @@ PreChorusProcessor::PreChorusProcessor()
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
 
-    // Initial default vocal harmonic chord in slot 0 & loadedBuffer
     loadedSR = 44100.0;
     loadedBuffer.setSize (2, (int) (loadedSR * 1.5));
     loadedBuffer.clear();
@@ -98,8 +96,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::voiceAge, "Voice Age", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.25f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::progReveal, "Prog Reveal", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.50f));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::voiceDirection, "Direction", juce::StringArray { "Forward", "Reverse", "Alternating", "Random" }, 2));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::character, "Character", juce::StringArray { "Clean Digital", "Analog Ensemble", "Lo-Fi Choral" }, 1));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::humanize, "Humanize", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.25f));
 
-    // Convergence Engine
+    // Convergence Engine & Macros
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::macro, "Convergence Macro", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 1.0f));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (IDs::freeze, "Freeze Ensemble", false));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (IDs::revConverge, "Reverse Convergence", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::postRelease, "Post-Target Release", juce::StringArray { "Cut at Impact", "Sustain Chorus", "Scatter Out" }, 1));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::timeSpread, "Time Spread", juce::NormalisableRange<float> (0.1f, 4.0f, 0.01f, 0.6f), 1.2f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::timeConverge, "Time Converge", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.85f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::pitchSpread, "Pitch Spread", juce::NormalisableRange<float> (0.0f, 24.0f, 0.5f), 7.0f));
@@ -124,13 +128,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::basscut, "Bass Cut", juce::NormalisableRange<float> (20.0f, 1000.0f, 1.0f, 0.35f), 80.0f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::space, "Space", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f));
 
-    // Mix & PDC
+    // Mix & PDC & Sequence
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::dry, "Dry", juce::NormalisableRange<float> (0.0f, 1.5f, 0.01f), 1.0f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::wet, "Wet", juce::NormalisableRange<float> (0.0f, 1.5f, 0.01f), 1.0f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::dryReplace, "Dry Replace", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
     p.push_back (std::make_unique<juce::AudioParameterBool> (IDs::align, "PDC Align", true));
     p.push_back (std::make_unique<juce::AudioParameterBool> (IDs::sync, "Sync", true));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::syncLen, "Sync Length", juce::StringArray { "1/2 Bar", "1 Bar", "2 Bars", "4 Bars" }, 1));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::sequence, "Target Sequence", juce::StringArray { "Every Note", "Beat 1 Only", "Every 2 Bars", "Every 4 Bars" }, 0));
 
     // Envelopes & Trim
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::pitch, "Pitch Sweep", juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
@@ -162,6 +167,7 @@ void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     captureRingBuffer.setSize (2, maxCaptureSamples);
     captureRingBuffer.clear();
     captureWritePos = 0;
+    lastPlayheadSample = -1;
 
     dirty = true;
 }
@@ -178,6 +184,9 @@ void PreChorusProcessor::resetEdits()
     setParam (IDs::pitch, 0.0f);      setParam (IDs::pitchTension, 0.0f);
     setParam (IDs::pitchConverge, 0.9f);
     setParam (IDs::timeConverge, 0.85f);
+    setParam (IDs::macro, 1.0f);
+    setParam (IDs::freeze, 0.0f);
+    setParam (IDs::revConverge, 0.0f);
 }
 
 void PreChorusProcessor::randomizePreChorus()
@@ -237,10 +246,15 @@ std::shared_ptr<const RenderedSample> PreChorusProcessor::getRendered() const
 
 void PreChorusProcessor::timerCallback()
 {
+    // Follow Tempo: recalculate sync duration when BPM shifts
     if (param (IDs::sync) > 0.5f)
     {
         const double bpm = hostBpm.load();
-        if (std::abs (bpm - lastRenderBpm) > 0.05) { lastRenderBpm = bpm; dirty = true; }
+        if (std::abs (bpm - lastRenderBpm) > 0.05)
+        {
+            lastRenderBpm = bpm;
+            dirty = true;
+        }
     }
     if (dirty.exchange (false))
     {
@@ -283,7 +297,6 @@ void PreChorusProcessor::stopCapture()
             newBuf.copyFrom (ch, 0, captureRingBuffer, ch, 0, capturedLen);
 
         int slot = activeSlot.load();
-        // If locked and filled, find next unlocked slot
         if (captureLockState.load() && captureSlotFilled[(size_t) slot])
         {
             for (int i = 0; i < kNumHistorySlots; ++i)
@@ -314,7 +327,7 @@ void PreChorusProcessor::render()
     const double sr = hostSampleRate > 1000.0 ? hostSampleRate : 44100.0;
     out->sampleRate = sr;
 
-    // 1. Determine Source Audio based on Source Mode
+    // 1. Source Selection
     const int sMode = (int) param (IDs::sourceMode);
     juce::AudioBuffer<float> source;
     double rawSR = 44100.0;
@@ -322,7 +335,7 @@ void PreChorusProcessor::render()
     {
         const juce::ScopedLock sl (sourceLock);
         int slot = activeSlot.load();
-        if (sMode == 0 /* Live Capture */)
+        if (sMode == 0)
         {
             if (captureSlotFilled[(size_t) slot])
             {
@@ -335,12 +348,12 @@ void PreChorusProcessor::render()
                 rawSR = loadedSR;
             }
         }
-        else if (sMode == 1 /* Loaded Sample */)
+        else if (sMode == 1)
         {
             source.makeCopyOf (loadedBuffer);
             rawSR = loadedSR;
         }
-        else if (sMode == 2 /* Hybrid */)
+        else if (sMode == 2)
         {
             int len = juce::jmax (loadedBuffer.getNumSamples(), captureSlots[(size_t) slot].getNumSamples());
             if (len > 0)
@@ -357,7 +370,7 @@ void PreChorusProcessor::render()
                 rawSR = loadedSR;
             }
         }
-        else /* Sliced */
+        else
         {
             source.makeCopyOf (loadedBuffer);
             rawSR = loadedSR;
@@ -366,7 +379,7 @@ void PreChorusProcessor::render()
 
     if (source.getNumSamples() == 0) return;
 
-    // Resample source to host SR if different
+    // Resample if needed
     if (std::abs (rawSR - sr) > 1.0)
     {
         const double ratio = rawSR / sr;
@@ -391,7 +404,7 @@ void PreChorusProcessor::render()
 
     const int srcLen = source.getNumSamples();
 
-    // 2. Swell Length calculation
+    // 2. Swell Duration
     int beats = 0;
     double swellSeconds = param (IDs::tail);
     if (param (IDs::sync) > 0.5f)
@@ -405,18 +418,24 @@ void PreChorusProcessor::render()
     swellSeconds = juce::jlimit (0.1, 16.0, swellSeconds);
     const int swellLen = (int) (swellSeconds * sr);
 
-    // 3. Swarm Parameters
+    // 3. Swarm & Macro Parameters
     const int numVoices = juce::jlimit (1, 32, (int) param (IDs::voiceCount));
+    const float macroParam = param (IDs::macro);
+    const bool isFrozen = param (IDs::freeze) > 0.5f;
+    const bool isRevConverge = param (IDs::revConverge) > 0.5f;
+    const int postReleaseMode = (int) param (IDs::postRelease);
+    const int charMode = (int) param (IDs::character);
+    const float humanizeAmt = param (IDs::humanize);
+
     const float timeSpreadSec = param (IDs::timeSpread);
-    const float timeConvergeAmt = param (IDs::timeConverge);
+    const float timeConvergeAmt = param (IDs::timeConverge) * macroParam;
     const float densityCurveParam = param (IDs::voiceDensity);
     const float pitchSpreadSemi = param (IDs::pitchSpread);
     const float detuneCents = param (IDs::detune);
-    const float pitchConvergeAmt = param (IDs::pitchConverge);
+    const float pitchConvergeAmt = param (IDs::pitchConverge) * macroParam;
     const int scaleMode = (int) param (IDs::scaleLock);
     const float panSpreadAmt = param (IDs::panSpread);
-    const float panConvergeAmt = param (IDs::panConverge);
-    const float toneConvergeAmt = param (IDs::toneConverge);
+    const float panConvergeAmt = param (IDs::panConverge) * macroParam;
     const float attractionAmt = param (IDs::attraction);
     const float turbulenceAmt = param (IDs::turbulence);
     const float overshootAmt = param (IDs::overshoot);
@@ -426,109 +445,129 @@ void PreChorusProcessor::render()
     const int voiceDir = (int) param (IDs::voiceDirection);
     const float shapeVal = param (IDs::shape);
 
-    // Deterministic PRNG
     juce::Random rnd ((juce::int64) param (IDs::seed));
 
-    juce::AudioBuffer<float> swarmBuffer (2, swellLen);
+    // Post-release extra tail buffer length (for sustain / scatter out modes)
+    int postReleaseExtraSamples = 0;
+    if (postReleaseMode == 1 || postReleaseMode == 2)
+        postReleaseExtraSamples = (int) (sr * 1.5); // 1.5s post-target chorus sustain / scatter
+
+    const int totalSwarmLen = swellLen + postReleaseExtraSamples;
+    juce::AudioBuffer<float> swarmBuffer (2, totalSwarmLen);
     swarmBuffer.clear();
 
-    // Slicing pre-division for slice scatter mode
     const int numSlices = 8;
     const int sliceLen = srcLen / numSlices;
 
-    // Render each voice in the swarm
+    // Render Voices
     for (int v = 0; v < numVoices; ++v)
     {
         const float vNorm = (numVoices > 1) ? (float) v / (float) (numVoices - 1) : 0.5f;
 
-        // Entry Timing: early voices start further back, density curve controls arrival grouping
+        // Humanization micro-variations
+        const float hTime = (rnd.nextFloat() * 2.0f - 1.0f) * humanizeAmt * 0.015f; // +/- 15ms
+        const float hPitch = (rnd.nextFloat() * 2.0f - 1.0f) * humanizeAmt * 0.12f; // +/- 12 cents
+
+        // Entry Timing
         const float densityNorm = tensionCurve (vNorm, densityCurveParam);
-        const float rawOffsetSec = (1.0f - densityNorm) * timeSpreadSec;
-        const float offsetSec = rawOffsetSec * (1.0f - timeConvergeAmt * 0.7f);
+        const float rawOffsetSec = (1.0f - densityNorm) * timeSpreadSec + hTime;
+        const float offsetSec = juce::jmax (0.01f, rawOffsetSec * (1.0f - timeConvergeAmt * 0.7f));
         const int voiceStartSample = juce::jlimit (0, swellLen - 1, (int) ((swellSeconds - offsetSec) * sr));
 
-        // Pitch generation & scale lock
+        // Pitch & Scale
         const float randPitch = (rnd.nextFloat() * 2.0f - 1.0f) * pitchSpreadSemi;
-        const float microDetune = (vNorm - 0.5f) * 2.0f * (detuneCents / 100.0f);
+        const float microDetune = (vNorm - 0.5f) * 2.0f * (detuneCents / 100.0f) + hPitch;
         const float initPitchSemi = quantizeToScale (randPitch, scaleMode) + microDetune;
 
-        // Direction: Forward, Reverse, Alternating, or Random
+        // Direction
         bool isRev = false;
         if (voiceDir == 1) isRev = true;
         else if (voiceDir == 2) isRev = (v % 2 == 1);
         else if (voiceDir == 3) isRev = (rnd.nextFloat() > 0.5f);
 
-        // Progressive Reveal: early voices use shorter sliced windows
+        // Progressive Reveal
         const float revealFrac = juce::jlimit (0.08f, 1.0f, vNorm + (1.0f - progRevealAmt) * 0.92f);
         const int playableSrcLen = juce::jmax (64, (int) (srcLen * revealFrac));
 
-        // Sliced mode offset
         int srcOffset = 0;
-        if (sMode == 3 /* Sliced */ && sliceLen > 64)
-        {
-            srcOffset = (v % numSlices) * sliceLen;
-        }
+        if (sMode == 3 && sliceLen > 64) srcOffset = (v % numSlices) * sliceLen;
 
-        // Voice panning start
         const float initPan = (vNorm * 2.0f - 1.0f) * panSpreadAmt;
-
-        // Voice Age: earlier voices have low-pass darkening filter state
         float ageFilterL = 0.0f, ageFilterR = 0.0f;
         const float ageCoeff = juce::jlimit (0.0f, 0.85f, (1.0f - vNorm) * voiceAgeAmt);
 
-        // Synthesis loop for voice 'v'
         double readPos = 0.0;
-        const int voiceActiveSamples = swellLen - voiceStartSample;
+        const int voiceActiveSamples = totalSwarmLen - voiceStartSample;
         if (voiceActiveSamples <= 0) continue;
 
-        for (int i = voiceStartSample; i < swellLen; ++i)
+        for (int i = voiceStartSample; i < totalSwarmLen; ++i)
         {
-            const float progress = (float) (i - voiceStartSample) / (float) juce::jmax (1, voiceActiveSamples - 1);
-            const float globalSwellNorm = (float) i / (float) juce::jmax (1, swellLen - 1);
+            // Calculate convergence progress
+            float progress = 0.0f;
+            if (i < swellLen)
+            {
+                progress = (float) (i - voiceStartSample) / (float) juce::jmax (1, swellLen - voiceStartSample);
+            }
+            else
+            {
+                // Post-target phase
+                if (postReleaseMode == 0) break; // Cut at Impact!
+                progress = 1.0f;
+            }
 
-            // Convergence Trajectories:
-            // 1. Pitch Convergence with attraction, overshoot & turbulence
-            const float convergeCurve = tensionCurve (progress, attractionAmt);
+            // Freeze mode locks progress at 0.5 halfway spread
+            if (isFrozen) progress = 0.5f;
+
+            // Reverse Convergence inverts trajectory: starts in unison and scatters outward
+            const float effectiveProgress = isRevConverge ? (1.0f - progress) : progress;
+
+            // 1. Pitch Convergence
+            const float convergeCurve = tensionCurve (effectiveProgress, attractionAmt);
             float curPitchSemi = initPitchSemi * (1.0f - pitchConvergeAmt * convergeCurve);
 
-            if (overshootAmt > 0.01f && progress > 0.6f)
+            if (overshootAmt > 0.01f && effectiveProgress > 0.6f)
             {
-                // Damped spring oscillation past unison
-                const float spring = std::sin ((progress - 0.6f) * 16.0f) * std::exp (-(progress - 0.6f) * 6.0f);
+                const float spring = std::sin ((effectiveProgress - 0.6f) * 16.0f) * std::exp (-(effectiveProgress - 0.6f) * 6.0f);
                 curPitchSemi += initPitchSemi * overshootAmt * spring;
             }
 
             if (turbulenceAmt > 0.01f)
             {
-                const float turb = std::sin (progress * 42.0f + (float) v * 3.7f) * turbulenceAmt * 0.8f;
+                const float turb = std::sin (effectiveProgress * 42.0f + (float) v * 3.7f) * turbulenceAmt * 0.8f;
                 curPitchSemi += turb;
+            }
+
+            // Post-target scatter outward pitch drift
+            if (i >= swellLen && postReleaseMode == 2)
+            {
+                const float postFrac = (float) (i - swellLen) / (float) postReleaseExtraSamples;
+                curPitchSemi += initPitchSemi * postFrac * 0.75f;
             }
 
             const double pitchSpeed = std::pow (2.0, curPitchSemi / 12.0);
 
             // 2. Pan & Width Convergence + Orbit
             float curPan = initPan;
-            if (panConvergeAmt > 0.0f)
-            {
-                // Collapse to center
-                curPan = initPan * (1.0f - panConvergeAmt * progress);
-            }
-            else if (panConvergeAmt < 0.0f)
-            {
-                // Bloom outward
-                curPan = initPan * (1.0f + (-panConvergeAmt) * progress * 1.5f);
-            }
+            if (panConvergeAmt > 0.0f) curPan = initPan * (1.0f - panConvergeAmt * effectiveProgress);
+            else if (panConvergeAmt < 0.0f) curPan = initPan * (1.0f + (-panConvergeAmt) * effectiveProgress * 1.5f);
 
             if (orbitAmt > 0.01f)
             {
-                const float orbitAngle = progress * juce::MathConstants<float>::twoPi * 2.0f + vNorm * juce::MathConstants<float>::twoPi;
+                const float orbitAngle = effectiveProgress * juce::MathConstants<float>::twoPi * 2.0f + vNorm * juce::MathConstants<float>::twoPi;
                 curPan = juce::jlimit (-1.0f, 1.0f, curPan + std::sin (orbitAngle) * orbitAmt * 0.7f);
+            }
+
+            // Post-target scatter outward pan explosion
+            if (i >= swellLen && postReleaseMode == 2)
+            {
+                const float postFrac = (float) (i - swellLen) / (float) postReleaseExtraSamples;
+                curPan = juce::jlimit (-1.0f, 1.0f, curPan * (1.0f + postFrac * 2.0f));
             }
 
             const float panL = std::cos ((curPan + 1.0f) * 0.25f * juce::MathConstants<float>::pi);
             const float panR = std::sin ((curPan + 1.0f) * 0.25f * juce::MathConstants<float>::pi);
 
-            // Read source with interpolation
+            // Sample read
             int sIdx = (int) readPos;
             if (sMode == 3) sIdx = srcOffset + (sIdx % juce::jmax (1, sliceLen));
             else sIdx = sIdx % playableSrcLen;
@@ -540,7 +579,19 @@ void PreChorusProcessor::render()
             float sampL = source.getSample (0, sIdx) + (source.getSample (0, sIdx + 1) - source.getSample (0, sIdx)) * frac;
             float sampR = source.getSample (1, sIdx) + (source.getSample (1, sIdx + 1) - source.getSample (1, sIdx)) * frac;
 
-            // Apply Voice Age filtering
+            // Character Modes:
+            if (charMode == 1) // Analog Ensemble (soft saturation & tape warmth)
+            {
+                sampL = std::tanh (sampL * 1.35f);
+                sampR = std::tanh (sampR * 1.35f);
+            }
+            else if (charMode == 2) // Lo-Fi Choral (bit crush / sample step)
+            {
+                sampL = std::floor (sampL * 16.0f) / 16.0f;
+                sampR = std::floor (sampR * 16.0f) / 16.0f;
+            }
+
+            // Voice Age filtering
             if (ageCoeff > 0.01f)
             {
                 ageFilterL = ageFilterL * ageCoeff + sampL * (1.0f - ageCoeff);
@@ -549,10 +600,21 @@ void PreChorusProcessor::render()
                 sampR = ageFilterR;
             }
 
-            // Swell envelope rising toward climax
-            const float swellGain = tensionCurve (globalSwellNorm, shapeVal);
-            const float voiceAmp = 1.0f / std::sqrt ((float) numVoices);
+            // Swell envelope & Post-target release envelope
+            float swellGain = 1.0f;
+            if (i < swellLen)
+            {
+                const float globalSwellNorm = (float) i / (float) juce::jmax (1, swellLen - 1);
+                swellGain = tensionCurve (globalSwellNorm, shapeVal);
+            }
+            else
+            {
+                // Post-target fade out over extra tail
+                const float postFrac = (float) (i - swellLen) / (float) postReleaseExtraSamples;
+                swellGain = std::cos (postFrac * juce::MathConstants<float>::halfPi);
+            }
 
+            const float voiceAmp = 1.0f / std::sqrt ((float) numVoices);
             swarmBuffer.addSample (0, i, sampL * swellGain * panL * voiceAmp);
             swarmBuffer.addSample (1, i, sampR * swellGain * panR * voiceAmp);
 
@@ -560,23 +622,20 @@ void PreChorusProcessor::render()
         }
     }
 
-    // Normalize swarm
-    const float swarmMag = swarmBuffer.getMagnitude (0, swellLen);
+    const float swarmMag = swarmBuffer.getMagnitude (0, totalSwarmLen);
     if (swarmMag > 0.001f) swarmBuffer.applyGain (0.90f / swarmMag);
 
-    // 4. Space / Diffusion wash
+    // 4. Space / Diffusion
     const float spaceAmt = param (IDs::space);
     if (spaceAmt > 0.01f)
     {
-        const int delayL = (int) (sr * 0.031);
-        const int delayR = (int) (sr * 0.043);
-        std::vector<float> bufL ((size_t) delayL, 0.0f);
-        std::vector<float> bufR ((size_t) delayR, 0.0f);
+        const int delayL = (int) (sr * 0.031), delayR = (int) (sr * 0.043);
+        std::vector<float> bufL ((size_t) delayL, 0.0f), bufR ((size_t) delayR, 0.0f);
         int idxL = 0, idxR = 0;
         float* ptrL = swarmBuffer.getWritePointer (0);
         float* ptrR = swarmBuffer.getWritePointer (1);
 
-        for (int i = 0; i < swellLen; ++i)
+        for (int i = 0; i < totalSwarmLen; ++i)
         {
             const float inL = ptrL[i], inR = ptrR[i];
             const float dL = bufL[(size_t) idxL], dR = bufR[(size_t) idxR];
@@ -589,13 +648,13 @@ void PreChorusProcessor::render()
         }
     }
 
-    // 5. Tone & Bass Cut Filters
+    // 5. Tone & Bass Cut
     auto applyIIR = [&] (const juce::IIRCoefficients& coeffs)
     {
         juce::IIRFilter fL, fR;
         fL.setCoefficients (coeffs); fR.setCoefficients (coeffs);
-        fL.processSamples (swarmBuffer.getWritePointer (0), swellLen);
-        fR.processSamples (swarmBuffer.getWritePointer (1), swellLen);
+        fL.processSamples (swarmBuffer.getWritePointer (0), totalSwarmLen);
+        fR.processSamples (swarmBuffer.getWritePointer (1), totalSwarmLen);
     };
 
     const float hp = param (IDs::basscut);
@@ -603,17 +662,16 @@ void PreChorusProcessor::render()
     const float lp = param (IDs::tone);
     if (lp < 19900.0f) applyIIR (juce::IIRCoefficients::makeLowPass (sr, lp));
 
-    // 6. Combine: Swell + Climax Hit (or Dry Replacement)
+    // 6. Combine: Swell + Climax Hit
     const float dryReplaceAmt = param (IDs::dryReplace);
     const int hitLen = juce::jmin (srcLen, (int) (sr * 2.0));
-    const int fullLen = swellLen + hitLen;
+    const int fullLen = totalSwarmLen + hitLen;
     juce::AudioBuffer<float> full (2, fullLen);
     full.clear();
 
     for (int ch = 0; ch < 2; ++ch)
     {
-        full.copyFrom (ch, 0, swarmBuffer, ch, 0, swellLen);
-        // If dry replacement is 1.0, the dry hit is replaced by the peak converged swarm!
+        full.copyFrom (ch, 0, swarmBuffer, ch, 0, totalSwarmLen);
         if (dryReplaceAmt < 0.99f)
         {
             full.copyFrom (ch, swellLen, source, ch, 0, hitLen);
@@ -704,14 +762,42 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
 
-    // Track host BPM
+    // Transport Recovery & Follow Tempo
+    float conf = 1.0f;
     if (auto* ph = getPlayHead())
     {
         if (auto pos = ph->getPosition())
         {
-            if (pos->getBpm()) hostBpm.store (*pos->getBpm());
+            if (pos->getBpm())
+            {
+                double curBpm = *pos->getBpm();
+                if (std::abs (curBpm - lastKnownBpm) > 0.05)
+                {
+                    lastKnownBpm = curBpm;
+                    hostBpm.store (curBpm);
+                    dirty = true;
+                }
+            }
+
+            // Transport Recovery: detect playback jump / loop restart
+            if (pos->getTimeInSamples())
+            {
+                juce::int64 curSample = *pos->getTimeInSamples();
+                if (lastPlayheadSample >= 0 && std::abs (curSample - (lastPlayheadSample + numSamples)) > 2048)
+                {
+                    // Discontinuity detected: flush active voices to prevent stale audio clicks
+                    for (auto& v : voices) v.active = false;
+                    playhead.store (-1);
+                }
+                lastPlayheadSample = curSample;
+            }
         }
     }
+
+    // Target Confidence calculation
+    if (param (IDs::align) < 0.5f) conf *= 0.8f;
+    if (param (IDs::sync) < 0.5f) conf *= 0.85f;
+    targetConfidence.store (conf);
 
     // Live Input Meter & Capture State Machine
     const float inPeak = buffer.getMagnitude (0, numSamples);
@@ -722,7 +808,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     {
         const int mode = (int) param (IDs::captureMode);
         const float threshLin = juce::Decibels::decibelsToGain (param (IDs::thresh));
-        if (mode == 7 /* Manual */ || inPeak >= threshLin)
+        if (mode == 7 || inPeak >= threshLin)
         {
             captureState.store (CaptureState::recording);
             captureWritePos = 0;
@@ -730,14 +816,13 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
             if (mode >= 1 && mode <= 6)
             {
-                // Musical divisions: 1/16, 1/8, 1/4(1 beat), 1/2(2 beats), 1 bar(4 beats), 2 bars(8 beats)
                 const double beatFractions[] = { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0 };
                 const double secPerBeat = 60.0 / juce::jlimit (30.0, 300.0, hostBpm.load());
                 captureTargetSamples = (int) (beatFractions[mode - 1] * secPerBeat * hostSampleRate);
             }
             else
             {
-                captureTargetSamples = (int) (hostSampleRate * 6.0); // max 6s threshold capture
+                captureTargetSamples = (int) (hostSampleRate * 6.0);
             }
         }
     }
@@ -756,7 +841,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         }
 
         const int mode = (int) param (IDs::captureMode);
-        if (mode == 0 /* Threshold */)
+        if (mode == 0)
         {
             const float threshLin = juce::Decibels::decibelsToGain (param (IDs::thresh));
             if (inPeak < threshLin * 0.5f) captureSilenceCounter += numSamples;
@@ -774,7 +859,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
-    // MIDI & Triggers
+    // MIDI & Triggers with Target Sequence Filter
     if (stopRequest.exchange (0))
     {
         for (auto& v : voices) v.active = false;
@@ -782,14 +867,35 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     }
     if (triggerRequest.exchange (0)) startVoice (1.0f);
 
+    const int seqMode = (int) param (IDs::sequence);
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
-        if (m.isNoteOn()) startVoice (m.getFloatVelocity());
+        if (m.isNoteOn())
+        {
+            bool allowTrigger = true;
+            if (seqMode > 0)
+            {
+                if (auto* ph = getPlayHead())
+                {
+                    if (auto pos = ph->getPosition())
+                    {
+                        if (pos->getPpqPosition())
+                        {
+                            const double ppq = *pos->getPpqPosition();
+                            const double barFrac = std::fmod (ppq, 4.0);
+                            if (seqMode == 1 && barFrac > 0.4) allowTrigger = false; // Beat 1 only
+                            else if (seqMode == 2 && std::fmod (std::floor (ppq / 4.0), 2.0) != 0.0) allowTrigger = false; // Every 2 bars
+                            else if (seqMode == 3 && std::fmod (std::floor (ppq / 4.0), 4.0) != 0.0) allowTrigger = false; // Every 4 bars
+                        }
+                    }
+                }
+            }
+            if (allowTrigger) startVoice (m.getFloatVelocity());
+        }
         else if (m.isAllNotesOff()) for (auto& v : voices) v.active = false;
     }
 
-    // Realtime playback voices
     auto r = getRendered();
     if (r == nullptr || r->audio.getNumSamples() == 0) return;
 
