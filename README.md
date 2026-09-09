@@ -1,40 +1,62 @@
 # PreChorus
 
-Multi-voice anticipation and choral swell engine for vocals, synths, and one-shots. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
+32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
 
-Captures notes, words, hits, or timed musical phrases from live audio input (or load any one-shot/vocal stem), and generates multiple sample-based voices that swell and build anticipatory energy directly into your chorus or drop.
+Captures notes, words, hits, or timed musical phrases from live audio input (or load any one-shot/vocal stem), and generates scalable swarms of up to 32 voices that start dispersed and progressively converge in pitch, time, stereo width, and tone directly into your chorus or drop.
+
+---
 
 ## Features
-- **Live Capture Engine**:
-  - **Threshold Auto-Capture**: Automatically begins recording when you sing, play a note, or fire a hit (customizable dB threshold).
-  - **Beat & Bar Sync**: Captures timed phrases (1 Beat, 2 Beats, 1 Bar, 2 Bars) locked to your DAW's transport BPM.
-  - **Manual Arm**: One-click punch in/out live audio capture.
-  - **Sample & Stem Loader**: Or browse local folders (`<` `>`) or drag-and-drop any WAV/AIFF/FLAC/MP3 directly into the plugin.
-- **Voice Engine**:
-  - **Voice Count**: Layer 2 to 12 simultaneous sample-based voices.
-  - **Timing Spread & Stagger**: Voices cascade and enter progressively before the downbeat.
-  - **Micro-Detune**: Sub-cent pitch detune for wide, lush choral unison.
-  - **Harmonic Stacking**: Musical harmony modes: Unison, Octaves, Power 5ths, and Choral Chords.
-  - **Stereo Pan Spread**: Fanning voices across the stereo soundstage.
-  - **Space & Diffusion**: Ambient choral wash layered into the swell.
-  - **Reverse Swell Blend**: Continuously morph between forward choral bloom and reversed vocal riser textures.
-- **Interactive Waveform & Envelopes**:
-  - **Waveform Color Reactivity**: Color shifts dynamically with Tone (LPF) and Bass Cut (HPF).
-  - **FL-Style Tension Curve**: Draggable volume envelope and tension handle right on top of the waveform.
-  - **Pitch Sweep & Tension**: 1 / 2 / 4 octave pitch sweep with dedicated tension curve box.
-  - **Interactive Trim**: Drag handles to trim start and end points.
-  - **Voice Orbit Constellation**: Real-time visualizer showing voice spread, stereo imaging, and phase.
-- **Workflow & DAW Integration**:
-  - **Hit on Note (PDC)**: Plug-in Delay Compensation aligns the climax hit / chorus drop dead-on the MIDI note.
-  - **Host BPM Sync**: Lock swell length to 1/2 bar, 1 bar, 2 bars, or 4 bars.
-  - **Drag-to-DAW**: Grab the "DRAG TO DAW" button to drop the rendered audio swell directly onto your DAW arrangement playlist.
-  - **WAV Export**: One-click 24-bit WAV file export.
-  - **Randomize**: Instant inspiration button for experimental choral riser textures.
+
+### 1. Source & Capture Engine
+- **Multiple Source Modes**:
+  - **Live Capture**: Real-time recording from the track input.
+  - **Loaded Sample**: Dedicated high-quality WAV/AIFF/FLAC/MP3 sample playback.
+  - **Hybrid Layer**: Automatically layers live captured audio with loaded stems.
+  - **Slice Scatter**: Transient-splits the source and distributes different slices across the ensemble voices.
+- **Capture History & Locking**:
+  - **8 Performance Memory Slots (1–8)**: Instant switching between recent vocal takes or phrase captures.
+  - **Lock Toggle**: Protects your favorite take from being overwritten while continuing to audition.
+- **Timed & Transient Capture**:
+  - **Threshold Auto-Capture**: Auto-records when you sing or hit a note (customizable dB threshold) and cleanly auto-trims on silence release.
+  - **BPM Sync Divisions**: Capture exact musical lengths: 1/16, 1/8, 1/4 (1 beat), 1/2 (2 beats), 1 Bar, and 2 Bars.
+  - **Manual Arm**: One-click punch in/out.
+
+### 2. 32-Voice Swarm Engine
+- **Voice Count (1 to 32)**: Scalable from subtle analog doubling to massive, dense cinematic vocal swarms.
+- **Progressive Reveal**: Early voices play short, percussive micro-chops while later voices progressively reveal more of the full vocal phrase.
+- **Voice Age & Darkening**: Earlier voices in the swarm can be selectively darkened and saturated with vintage tape-style roll-off.
+- **Voice Density Curve**: Shapes when and how quickly additional voices join the buildup (linear to explosive avalanche).
+- **Voice Direction**: Forward, Reverse, Alternating, or Random per seed.
+
+### 3. Convergence Engine
+- **Target Convergence**: Voices start scattered and pull tightly together toward the focal climax:
+  - **Timing Convergence**: Voices begin at wide staggered offsets and tighten toward the downbeat.
+  - **Pitch Convergence**: Scattered interval offsets glide into unison at the drop.
+  - **Musical Scale Lock**: Constrain scattered pitch intervals to Chromatic, Major, Minor, Pentatonic, or Octaves/5ths.
+  - **Width Convergence**: Choose between collapsing from wide stereo to center mono punch, or blooming outward from center.
+  - **Tone Convergence**: Scattered bright/dark voices progressively converge to the target spectrum.
+
+### 4. Physics & Organic Modulation
+- **Attraction**: Adjusts the gravitational pull strength snapping voices toward unison.
+- **Turbulence**: Injects natural pitch, phase, and panning flutter for lifelike ensemble realism.
+- **Overshoot**: Damped spring motion causing voices to briefly overshoot unison before locking in.
+- **Orbit Mode**: Circulates voices through the 3D stereo field before resolving.
+- **Deterministic Randomness (REGEN)**: Ensembles stay 100% bit-identical across playback and exports until you click REGEN for a new seed.
+
+### 5. Swell Shaping, Mix & DAW Integration
+- **Dry Replacement**: Blend or completely replace the original dry hit with the climax of the converged swarm.
+- **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
+- **FL-Style Tension Curves**: Direct draggable tension envelopes over the interactive waveform for volume and pitch sweeps.
+- **Drag-to-DAW**: Grab the "DRAG TO DAW" button to drop the rendered 24-bit WAV file straight onto your DAW arrangement playlist.
+- **Space & Diffusion**: Ambient choral wash layered into the swell.
+
+---
 
 ## Build (Windows)
 1. Keep the path short (e.g. `C:\Users\new\desktop\antigravityprojects\prechorus`)
 2. Right-click `build.ps1` > **Run with PowerShell** (as Administrator). First run installs CMake and downloads JUCE 8 automatically.
-3. Plugin builds and automatically installs to `C:\Program Files\Common Files\VST3\PreChorus.vst3`
+3. Plugin builds and installs to `C:\Program Files\Common Files\VST3\PreChorus.vst3`
 
 If PowerShell blocks scripts: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in an admin PowerShell.
 
@@ -45,8 +67,8 @@ cmake --build build --config Release
 ```
 
 ## DAWs & Usage
-- **FL Studio**: Options > Manage plugins > Find plugins. Add `PreChorus` as an effect on your vocal/synth track, or in the Channel Rack as an instrument to trigger via MIDI piano roll.
-- **Ableton / Logic / Reaper / Cubase**: Insert on any audio track for Live Capture, route MIDI to it to trigger swells, or use the standalone app.
+- **FL Studio**: Options > Manage plugins > Find plugins. Add `PreChorus` on your vocal/instrument track or channel rack.
+- **Ableton / Logic / Reaper / Cubase**: Insert on any audio track for Live Capture and route MIDI to trigger the swarm.
 
 ## License
 MIT

@@ -28,18 +28,18 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
     void drawComboBox (juce::Graphics&, int, int, bool, int, int, int, int, juce::ComboBox&) override;
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (12.0f)); }
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (11.0f)); }
     void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override;
 };
 
-// Animated Multi-Voice Orbital / Constellation Visualizer
+// Animated 32-Voice Convergence & Orbital Constellation
 class VoiceOrbitVisualizer : public juce::Component, private juce::Timer
 {
 public:
     explicit VoiceOrbitVisualizer (PreChorusProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (30); }
     void paint (juce::Graphics&) override;
 private:
-    void timerCallback() override { phase += 0.02f; repaint(); }
+    void timerCallback() override { phase += 0.025f; repaint(); }
     PreChorusProcessor& proc;
     float phase = 0.0f;
 };
@@ -140,20 +140,22 @@ private:
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
 
-    juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel, liveLabel;
+    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
-                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
+                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
+                     regenSeedButton { "REGEN" }, helpButton { "?" };
 
-    // Live Capture UI
-    juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" };
-    juce::ComboBox captureCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt;
+    // Live Capture UI & History
+    juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
+    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt;
+    std::array<juce::TextButton, 8> historySlotButtons;
 
-    // Transport / Sync
+    // Transport / Sync / PDC
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
-    juce::ComboBox syncCombo, rangeCombo, harmonyCombo;
+    juce::ComboBox syncCombo, rangeCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, harmonyComboAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
 
     WaveformDisplay waveform;
     VoiceOrbitVisualizer visualizer;
@@ -162,8 +164,23 @@ private:
     HelpOverlay help;
 
     std::vector<std::unique_ptr<Knob>> knobs;
-    Knob *kVoices, *kSpread, *kDetune, *kPanSpread, *kSpace, *kReverse;
-    Knob *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kThresh;
+
+    // Swarm Voice Engine
+    Knob *kVoiceCount, *kVoiceDensity, *kVoiceAge, *kProgReveal;
+
+    // Convergence Engine
+    Knob *kTimeSpread, *kTimeConverge, *kPitchSpread, *kDetune, *kPitchConverge, *kPanSpread, *kPanConverge, *kToneConverge;
+
+    // Physics
+    Knob *kAttraction, *kTurbulence, *kOvershoot, *kOrbit;
+
+    // Swell & Filters
+    Knob *kTail, *kShape, *kTone, *kBass, *kSpace;
+
+    // Mix & Capture
+    Knob *kDry, *kWet, *kDryReplace, *kThresh;
+
+    // Pitch & Volume Envelopes
     Knob *kPitch, *kVolStart, *kVolEnd, *kVolTension;
 
     std::vector<Group> groups;
