@@ -2,11 +2,11 @@
 
 32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
 
-**The Signature Sound**: A cloud of related voices becoming progressively more recognizable and coherent until they meet the original drop or event.
+**The Signature Sound**: A cloud of related voices becoming progressively more recognizable, coherent, and intimate until they meet the original drop or event.
 
 ---
 
-## Key Systems & Features
+## Complete Systems Breakdown
 
 ### 1. Source & Capture Engine
 - **Multiple Source Modes**:
@@ -28,20 +28,29 @@
 - **Voice Age & Darkening**: Earlier voices in the swarm can be selectively darkened with vintage tape-style roll-off.
 - **Voice Density Curve**: Shapes when and how quickly additional voices join the buildup (linear rise or exponential avalanche).
 - **Voice Direction**: Forward, Reverse, Alternating (odd reverse, even forward), or Random per seed.
-- **Voice Character**:
-  - **Clean Digital**: Transparent, high-precision interpolation.
-  - **Analog Ensemble**: Warm tape saturation (`tanh`), subtle pitch drift, and bandwidth contouring.
-  - **Lo-Fi Choral**: Gritty vintage bit-depth and sample-rate reduction.
-- **Humanize**: Injects organic micro-variations across start timing (+/- 15ms), pitch drift, and velocity.
+- **Grain Size (10ms–200ms)**: Variable grain size and Hann windowing for granular textures.
+- **Humanize**: Injects organic micro-variations across voice start timing (±15ms), micro-pitch drift, and velocity weighting.
 
-### 3. Convergence & Modulation Engine
-- **Convergence Macro**: A single dedicated macro knob scaling all enabled convergence dimensions together.
-- **Freeze**: Suspends convergence and holds the ensemble at its current spread for an infinite ambient drone or vocal choir pad.
+### 3. Voice Character Models
+- **Clean Digital**: Pristine, transparent interpolation with zero coloration.
+- **Analog Ensemble**: Warm tape-style saturation (`tanh`), subtle analog pitch drift, and low-mid bandwidth contouring.
+- **Bucket-Brigade (BBD)**: Darker repeats, analog BBD clock roll-off (4.5 kHz), companding, and controllable BBD clock noise.
+- **Tape Choir**: Wow and flutter modulation with warm tape head saturation.
+- **Dimension**: Ultra-wide cross-coupled chorusing (Roland Dimension D style) designed to preserve a solid, phase-safe mono center.
+- **String Ensemble**: Vintage Solina/ARP-inspired multi-rate dual-LFO modulation (0.6 Hz slow LFO + 6.0 Hz vibrato).
+- **Granular Cloud**: Grains form an ethereal ambient texture while remaining tightly tied to the source.
+- **Lo-Fi Choral**: Vintage bit-depth and sample-rate reduction for gritty, crushed vocal chops.
+
+### 4. Convergence Engine & Musical Motion
+- **Convergence Macro (`MACRO` knob)**: A master knob scaling all enabled convergence dimensions simultaneously.
+- **Freeze**: Suspends convergence and holds the ensemble at its current spread, transforming the swell into an infinite ambient drone or vocal choir pad.
 - **Reverse Convergence (REV CONV)**: Inverts trajectory: voices begin in unified unison and progressively scatter into chaos before the target downbeat.
+- **3D Distance Approach**: Doppler-like distance staging: voices begin far away in a deep wet cavern and rush forward into upfront, dry, in-your-face closeness right at the impact.
+- **Focus**: Accelerates convergence near the drop, pulling pitch detune and stereo fanning into a laser-focused point.
 - **Post-Target Release**:
-  - **Cut at Impact**: Voices abruptly cut off right on the drop, maximizing transient impact.
-  - **Sustain Chorus**: Voices sustain past the drop as a lush, blooming chorus pad.
-  - **Scatter Outward**: The converged energy explodes back outward in pitch and stereo space after the downbeat.
+  - **Cut at Impact**: The swarm abruptly ends at the climax hit, maximizing drop punchiness.
+  - **Sustain Chorus**: Voices bloom and sustain past the impact as a rich, atmospheric choral pad with smooth cosine release.
+  - **Scatter Out**: Converged energy explodes back outward into wide stereo panning and pitch dispersion after the drop.
 - **Target Convergence Dimensions**:
   - **Timing Convergence**: Voices begin at wide staggered offsets and tighten toward the downbeat.
   - **Pitch Convergence**: Divergent intervals glide into unison at the focal climax.
@@ -49,18 +58,22 @@
   - **Width Convergence**: Collapse wide stereo down to center mono punch, or bloom outward from center.
   - **Tone Convergence**: Scattered bright/dark voices progressively match the target filter spectrum.
 
-### 4. Physics & Organic Movement
-- **Attraction**: Dial in the gravitational pull strength snapping voices toward unison.
-- **Turbulence**: Injects natural pitch, phase, and panning flutter for realistic, organic movement.
-- **Overshoot**: Damped spring motion causing voices to briefly swing past unison before settling.
-- **Orbit**: Circulates voices through the 3D stereo field before resolving.
-- **Deterministic Randomness (REGEN)**: Ensembles stay 100% bit-identical across playback and exports until you click REGEN for a new seed.
+### 5. Global Shaping, Acoustics & Color
+- **High-Pass & Low-Pass Filters with Resonance**: Sculpt the frequency range with variable Q resonance.
+- **Tilt EQ**: One-knob spectral balance pivot (dark warm low-end to bright airy highs).
+- **Presence Air**: Dedicated 10 kHz high-shelf sheen for modern pop/EDM vocal air.
+- **Drive & Soft Clipping**: Analog saturation for harmonics and grit.
+- **Transient Softening / Preservation**: Softens harsh sibilance or preserves sharp transient punch.
+- **Formant Shift**: Transposes vocal formants independent of pitch (±12 semitones).
+- **Mono Bass**: High-passes the Side channel below cutoff (20 Hz–300 Hz) to keep club sub-bass 100% pure mono.
+- **Sidechain Ducking**: Automatically ducks the swell whenever live input vocals or drum hits strike.
+- **Click Protection & Reverse Fades**: 5ms cosine windowing on grain edges and reverse turnarounds for 100% click-free playback.
 
-### 5. DAW Integration & Performance
+### 6. DAW Integration & Performance
 - **Target Confidence Readout**: Real-time visual badge showing downbeat alignment confidence (100% when locked).
-- **Target Sequence**: Restrict triggering to specific musical cycles (Every Note, Beat 1 Only, Every 2 Bars, Every 4 Bars).
-- **Follow Tempo**: Automatically recalculates voice paths and swell lengths whenever DAW BPM changes.
-- **Transport Recovery**: Detects DAW playhead jumps and loop restarts, immediately flushing buffers to prevent clicks or stale audio.
+- **Target Sequence**: Restricts automatic triggering to specific musical cycles (Every Note, Beat 1 Only, Every 2 Bars, Every 4 Bars).
+- **Follow Tempo**: Automatically recalculates voice paths and swell lengths whenever the DAW BPM shifts.
+- **Transport Recovery**: Detects DAW playhead jumps, loop restarts, or scrub discontinuities, immediately clearing voice buffers to prevent clicks or stale audio artifacts.
 - **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
 

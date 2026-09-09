@@ -16,8 +16,9 @@ namespace IDs
     static const juce::String voiceAge = "voiceAge";           // Degrades/darkens earlier voices
     static const juce::String progReveal = "progReveal";       // Progressive reveal: fragments -> full phrase
     static const juce::String voiceDirection = "voiceDir";     // 0: Forward, 1: Reverse, 2: Alternating, 3: Random
-    static const juce::String character = "character";         // 0: Clean Digital, 1: Analog Ensemble, 2: Lo-Fi Choral
+    static const juce::String character = "character";         // 0: Clean Digital, 1: Analog Ensemble, 2: Bucket-Brigade, 3: Tape Choir, 4: Dimension, 5: String Ensemble, 6: Granular Cloud, 7: Lo-Fi Choral
     static const juce::String humanize = "humanize";           // Organic micro-variations
+    static const juce::String grainSize = "grainSize";         // Grain size for granular cloud (10ms - 200ms)
 
     // Convergence Engine & Macros
     static const juce::String macro = "macro";                 // Global Convergence Macro (scales all dimensions)
@@ -33,27 +34,37 @@ namespace IDs
     static const juce::String panSpread = "panSpread";         // Stereo spread
     static const juce::String panConverge = "panConverge";     // -1: Bloom outward, 0: Static, 1: Collapse to center
     static const juce::String toneConverge = "toneConverge";   // Cutoff convergence
+    static const juce::String focus = "focus";                 // Focus: accelerates convergence into laser focus
 
-    // Physics & Modulation
+    // Physics & 3D Distance
     static const juce::String attraction = "attraction";       // Pull strength towards target
     static const juce::String turbulence = "turbulence";       // Organic flutter / jitter
     static const juce::String overshoot = "overshoot";         // Spring-like overshoot past unison
     static const juce::String orbit = "orbit";                 // Orbital stereo circulation
+    static const juce::String distance = "distance";           // 3D Distance approach (far cavern -> upfront dry)
     static const juce::String seed = "seed";                   // Deterministic random seed
 
-    // Swell & Tone
+    // Swell & Tone Shaping
     static const juce::String tail = "tail";
     static const juce::String shape = "shape";
     static const juce::String tone = "tone";
     static const juce::String basscut = "basscut";
+    static const juce::String resonance = "resonance";         // Filter Q
+    static const juce::String tilt = "tilt";                   // Tilt EQ (-1: dark, +1: bright)
+    static const juce::String presence = "presence";           // 10kHz vocal air sheen
     static const juce::String space = "space";
+    static const juce::String drive = "drive";                 // Saturation & soft clipping
+    static const juce::String transients = "transients";       // -1: Soften, +1: Preserve punch
+    static const juce::String formant = "formant";             // Vocal formant shift
+    static const juce::String monoBass = "monoBass";           // Mono bass crossover (Hz)
+    static const juce::String ducking = "ducking";             // Sidechain ducking
 
     // Mix & PDC & Sequence
     static const juce::String dry = "dry", wet = "wet";
     static const juce::String dryReplace = "dryReplace";       // Swarm replaces or blends with dry hit
     static const juce::String align = "align";                 // PDC downbeat alignment
     static const juce::String sync = "sync", syncLen = "syncLen";
-    static const juce::String sequence = "sequence";           // Target Sequence: 0: Every Note, 1: Beat 1, 2: Every 2 Bars, 3: Every 4 Bars
+    static const juce::String sequence = "sequence";           // Target Sequence
 
     // Envelopes & Trim
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
@@ -135,7 +146,6 @@ public:
     void setCaptureLock (bool locked);
     bool isCaptureLocked() const { return captureLockState.load(); }
 
-    // Target Confidence Readout
     float getTargetConfidence() const { return targetConfidence.load(); }
 
     // Swarm Playback & Preview
@@ -163,7 +173,7 @@ private:
 
     struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain);
-    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet);
+    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet, float duckGain);
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
@@ -174,7 +184,7 @@ private:
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
 
-    // Capture History (8 memory slots)
+    // Capture History
     static constexpr int kNumHistorySlots = 8;
     std::array<juce::AudioBuffer<float>, kNumHistorySlots> captureSlots;
     std::array<double, kNumHistorySlots> captureSlotSRs { 44100.0 };
@@ -182,7 +192,7 @@ private:
     std::atomic<int> activeSlot { 0 };
     std::atomic<bool> captureLockState { false };
 
-    // Live Capture recording state
+    // Live Capture state
     std::atomic<CaptureState> captureState { CaptureState::idle };
     std::atomic<float> inputMeter { 0.0f };
     juce::AudioBuffer<float> captureRingBuffer;
@@ -194,6 +204,9 @@ private:
     std::atomic<float> targetConfidence { 1.0f };
     juce::int64 lastPlayheadSample = -1;
     double lastKnownBpm = 120.0;
+
+    // Sidechain ducking envelope follower
+    float duckEnv = 0.0f;
 
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;

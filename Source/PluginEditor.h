@@ -29,7 +29,7 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
     void drawComboBox (juce::Graphics&, int, int, bool, int, int, int, int, juce::ComboBox&) override;
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (11.0f)); }
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (10.5f)); }
     void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override;
 };
 
@@ -167,19 +167,19 @@ private:
     std::vector<std::unique_ptr<Knob>> knobs;
 
     // Swarm Voice Engine
-    Knob *kVoiceCount, *kVoiceDensity, *kVoiceAge, *kProgReveal, *kHumanize;
+    Knob *kVoiceCount, *kVoiceDensity, *kVoiceAge, *kProgReveal, *kHumanize, *kGrainSize;
 
     // Convergence Engine & Macro
-    Knob *kMacro, *kTimeSpread, *kTimeConverge, *kPitchSpread, *kDetune, *kPitchConverge, *kPanSpread, *kPanConverge, *kToneConverge;
+    Knob *kMacro, *kTimeSpread, *kTimeConverge, *kPitchSpread, *kDetune, *kPitchConverge, *kPanSpread, *kPanConverge, *kToneConverge, *kFocus;
 
-    // Physics
-    Knob *kAttraction, *kTurbulence, *kOvershoot, *kOrbit;
+    // Physics & Spatial
+    Knob *kAttraction, *kTurbulence, *kOvershoot, *kOrbit, *kDistance;
 
-    // Swell & Filters
-    Knob *kTail, *kShape, *kTone, *kBass, *kSpace;
+    // Swell & Tone Shaping
+    Knob *kTail, *kShape, *kTone, *kBass, *kResonance, *kTilt, *kPresence, *kSpace, *kDrive, *kTransients, *kFormant, *kMonoBass;
 
-    // Mix & Capture
-    Knob *kDry, *kWet, *kDryReplace, *kThresh;
+    // Mix, Capture & Ducking
+    Knob *kDry, *kWet, *kDryReplace, *kThresh, *kDucking;
 
     // Pitch & Volume Envelopes
     Knob *kPitch, *kVolStart, *kVolEnd, *kVolTension;
