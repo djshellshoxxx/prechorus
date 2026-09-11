@@ -16,10 +16,28 @@ $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.e
 $vsPath = $null
 if (Test-Path $vswhere) { $vsPath = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1 }
 if (-not $vsPath) {
+    $fallbackPaths = @(
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\BuildTools",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\Community",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional"
+    )
+    foreach ($p in $fallbackPaths) {
+        if (Test-Path "$p\VC\Tools\MSVC") { $vsPath = $p; break }
+    }
+}
+if (-not $vsPath) {
     Write-Host "Installing Visual Studio C++ Build Tools (this is the slow part) ..."
     winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements `
         --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-    $vsPath = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+    if (Test-Path $vswhere) { $vsPath = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1 }
+    if (-not $vsPath) {
+        foreach ($p in $fallbackPaths) {
+            if (Test-Path "$p\VC\Tools\MSVC") { $vsPath = $p; break }
+        }
+    }
 }
 if (-not $vsPath) { throw "C++ build tools still not found. Open 'Visual Studio Installer', Modify > tick 'Desktop development with C++', then rerun." }
 Write-Host "Using compiler at: $vsPath"

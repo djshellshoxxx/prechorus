@@ -52,6 +52,7 @@ namespace IDs
     static const juce::String resonance = "resonance";         // Filter Q
     static const juce::String tilt = "tilt";                   // Tilt EQ (-1: dark, +1: bright)
     static const juce::String presence = "presence";           // 10kHz vocal air sheen
+    static const juce::String air = "air";                     // Filtered HF excitation to target & ensemble
     static const juce::String space = "space";
     static const juce::String drive = "drive";                 // Saturation & soft clipping
     static const juce::String transients = "transients";       // -1: Soften, +1: Preserve punch
@@ -155,6 +156,8 @@ public:
     void resetEdits();
     void randomizePreChorus();
     void regenerateSeed();
+    void loadFactoryPreset (int index);
+    static juce::StringArray getFactoryPresetNames();
 
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }

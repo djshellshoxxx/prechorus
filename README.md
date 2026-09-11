@@ -61,7 +61,8 @@
 ### 5. Global Shaping, Acoustics & Color
 - **High-Pass & Low-Pass Filters with Resonance**: Sculpt the frequency range with variable Q resonance.
 - **Tilt EQ**: One-knob spectral balance pivot (dark warm low-end to bright airy highs).
-- **Presence Air**: Dedicated 10 kHz high-shelf sheen for modern pop/EDM vocal air.
+- **Presence**: Dedicated 10 kHz high-shelf presence lift for modern pop/EDM vocal clarity.
+- **Air Sheen**: Filtered high-frequency exciter (8.5 kHz+ saturator) applied to both the ensemble swell and target climax hit for repeatable, shimmering harmonic top-end air.
 - **Drive & Soft Clipping**: Analog saturation for harmonics and grit.
 - **Transient Softening / Preservation**: Softens harsh sibilance or preserves sharp transient punch.
 - **Formant Shift**: Transposes vocal formants independent of pitch (±12 semitones).
@@ -69,7 +70,11 @@
 - **Sidechain Ducking**: Automatically ducks the swell whenever live input vocals or drum hits strike.
 - **Click Protection & Reverse Fades**: 5ms cosine windowing on grain edges and reverse turnarounds for 100% click-free playback.
 
-### 6. DAW Integration & Performance
+### 6. Factory Presets
+- **10 Curated Starting Points**: Pop Vocal Double, EDM Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, and Trap Vocal Stutter.
+- Presets shape the swarm, convergence, and tone-color knobs only — your loaded/captured source audio, trims, and envelope shaping are left untouched, so a preset can be auditioned on any material.
+
+### 7. DAW Integration & Performance
 - **Target Confidence Readout**: Real-time visual badge showing downbeat alignment confidence (100% when locked).
 - **Target Sequence**: Restricts automatic triggering to specific musical cycles (Every Note, Beat 1 Only, Every 2 Bars, Every 4 Bars).
 - **Follow Tempo**: Automatically recalculates voice paths and swell lengths whenever the DAW BPM shifts.

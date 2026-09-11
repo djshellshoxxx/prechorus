@@ -56,10 +56,10 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void rebuild();
 private:
     enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension };
     void timerCallback() override;
-    void rebuild();
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
     PreChorusProcessor& proc;
@@ -148,7 +148,7 @@ private:
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
-    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo;
+    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo, presetCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt;
     std::array<juce::TextButton, 8> historySlotButtons;
 
@@ -176,7 +176,7 @@ private:
     Knob *kAttraction, *kTurbulence, *kOvershoot, *kOrbit, *kDistance;
 
     // Swell & Tone Shaping
-    Knob *kTail, *kShape, *kTone, *kBass, *kResonance, *kTilt, *kPresence, *kSpace, *kDrive, *kTransients, *kFormant, *kMonoBass;
+    Knob *kTail, *kShape, *kTone, *kBass, *kResonance, *kTilt, *kPresence, *kAir, *kSpace, *kDrive, *kTransients, *kFormant, *kMonoBass;
 
     // Mix, Capture & Ducking
     Knob *kDry, *kWet, *kDryReplace, *kThresh, *kDucking;

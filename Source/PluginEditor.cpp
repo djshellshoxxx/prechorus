@@ -476,6 +476,39 @@ void DragOutPad::mouseDrag (const juce::MouseEvent&)
     dragging = false;
 }
 
+// ---------------- Pitch Tension Curve Box ----------------
+
+void TensionBox::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+
+    g.setColour (PCColours::panel2);
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (PCColours::outline);
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+
+    // Center crosshair (neutral / linear reference)
+    g.setColour (PCColours::outline.withAlpha (0.6f));
+    g.drawLine (r.getX(), r.getBottom(), r.getRight(), r.getY(), 1.0f);
+
+    const float t = proc.param (paramId);
+    juce::Path curve;
+    const int steps = 24;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float x = (float) i / (float) steps;
+        const float y = 1.0f - tensionCurve (x, t);
+        const auto pt = juce::Point<float> (r.getX() + x * r.getWidth(), r.getY() + y * r.getHeight());
+        if (i == 0) curve.startNewSubPath (pt); else curve.lineTo (pt);
+    }
+    g.setColour (PCColours::accent);
+    g.strokePath (curve, juce::PathStrokeType (1.8f));
+
+    g.setFont (juce::Font (juce::FontOptions (7.5f, juce::Font::bold)));
+    g.setColour (PCColours::textDim);
+    g.drawText ("BEND", getLocalBounds().removeFromBottom (10), juce::Justification::centred);
+}
+
 // ---------------- Help Overlay ----------------
 
 HelpOverlay::HelpOverlay()
@@ -492,6 +525,10 @@ HelpOverlay::HelpOverlay()
         "PRECHORUS - Complete 32-Voice Swarm & Convergence Engine\n\n"
         "The Signature Sound: A cloud of related voices becoming progressively more recognizable "
         "and coherent until they meet the original drop or event.\n\n"
+        "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
+        "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
+        "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
+        "Vocal Stutter). Presets only touch swarm/tone/convergence knobs, never your loaded audio.\n\n"
         "CHARACTER MODES:\n"
         "• Clean Digital: Pristine transparent sinc/linear interpolation.\n"
         "• Analog Ensemble: Warm saturation, gentle drift, bandwidth contouring.\n"
@@ -504,7 +541,7 @@ HelpOverlay::HelpOverlay()
         "GLOBAL SHAPING & MOTION:\n"
         "• 3D Distance: Doppler distance staging (far cavern wash -> upfront dry impact).\n"
         "• Focus: Accelerates convergence near the drop into laser focus.\n"
-        "• Tilt EQ & Presence: Spectral balance pivot and 10kHz vocal air sheen.\n"
+        "• Tilt EQ, Presence & Air: Spectral balance pivot, presence lift, and filtered HF air excitation.\n"
         "• Mono Bass: High-passes side channel below cutoff frequency (pure mono sub-bass).\n"
         "• Ducking: Sidechains and ducks the swell when live input vocals/hits strike.\n"
     );
@@ -583,10 +620,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     nextButton.onClick = [this] { proc.nextSample(); waveform.rebuild(); };
     loadButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Load Vocal or Sample Stem", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
-        chooser->launchOpenMode ([this] (const juce::FileChooser& fc) {
-            auto f = fc.getResult();
-            if (f.existsAsFile()) { proc.loadSampleFile (f, true); waveform.rebuild(); }
-        });
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this] (const juce::FileChooser& fc) {
+                auto f = fc.getResult();
+                if (f.existsAsFile()) { proc.loadSampleFile (f, true); waveform.rebuild(); }
+            });
     };
     playButton.onClick      = [this] { proc.triggerPreview(); };
     resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); };
@@ -596,10 +634,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
 
     exportButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
-        chooser->launchSaveMode ([this] (const juce::FileChooser& fc) {
-            auto f = fc.getResult();
-            if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav"));
-        });
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this] (const juce::FileChooser& fc) {
+                auto f = fc.getResult();
+                if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav"));
+            });
     };
 
     // Combos
@@ -626,6 +665,14 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     seqCombo.addItemList (juce::StringArray { "Every Note", "Beat 1 Only", "Every 2 Bars", "Every 4 Bars" }, 1);
     addAndMakeVisible (seqCombo);
     seqAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sequence, seqCombo);
+
+    presetCombo.setTextWhenNothingSelected ("FACTORY PRESETS");
+    presetCombo.addItemList (PreChorusProcessor::getFactoryPresetNames(), 1);
+    addAndMakeVisible (presetCombo);
+    presetCombo.onChange = [this] {
+        const int idx = presetCombo.getSelectedItemIndex();
+        if (idx >= 0) { proc.loadFactoryPreset (idx); waveform.rebuild(); }
+    };
 
     // Live Capture Controls & History
     addAndMakeVisible (armButton);
@@ -717,6 +764,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kResonance  = &makeKnob (IDs::resonance,  "RESONANCE");
     kTilt       = &makeKnob (IDs::tilt,       "TILT EQ");
     kPresence   = &makeKnob (IDs::presence,   "PRESENCE");
+    kAir        = &makeKnob (IDs::air,        "AIR");
     kSpace      = &makeKnob (IDs::space,      "SPACE");
     kDrive      = &makeKnob (IDs::drive,      "DRIVE");
     kTransients = &makeKnob (IDs::transients, "TRANSIENTS");
@@ -891,6 +939,9 @@ void PreChorusEditor::resized()
     charCombo.setBounds (header.removeFromRight (116).reduced (0, 5));
     header.removeFromRight (6);
 
+    presetCombo.setBounds (header.removeFromRight (128).reduced (0, 5));
+    header.removeFromRight (6);
+
     auto browser = header.withTrimmedLeft (12);
     loadButton.setBounds (browser.removeFromRight (64).reduced (0, 5));
     browser.removeFromRight (4);
@@ -978,10 +1029,10 @@ void PreChorusEditor::resized()
 
     // Row B: TONE SHAPING & COLOR, MIX & DUCK, PITCH & ENVELOPE
     const int wB = rowB.getWidth();
-    layoutKnobs (group (rowB, (int) (wB * 0.52f), "TONE SHAPING, ACOUSTICS & COLOR"),
-                 { kTail, kShape, kTone, kBass, kResonance, kTilt, kPresence, kSpace, kDrive, kTransients, kFormant, kMonoBass });
+    layoutKnobs (group (rowB, (int) (wB * 0.54f), "TONE SHAPING, ACOUSTICS & COLOR"),
+                 { kTail, kShape, kTone, kBass, kResonance, kTilt, kPresence, kAir, kSpace, kDrive, kTransients, kFormant, kMonoBass });
 
-    auto mixGrp = group (rowB, (int) (wB * 0.28f), "MIX, CAPTURE & DUCK");
+    auto mixGrp = group (rowB, (int) (wB * 0.26f), "MIX, CAPTURE & DUCK");
     {
         auto rightRelease = mixGrp.removeFromRight (94);
         postReleaseCombo.setBounds (rightRelease.withSizeKeepingCentre (90, 22));

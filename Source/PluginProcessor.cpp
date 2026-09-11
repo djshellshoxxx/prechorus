@@ -42,8 +42,8 @@ PreChorusProcessor::PreChorusProcessor()
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
     formatManager.registerBasicFormats();
-    for (auto* p : apvts.getParameterTree().getParameters())
-        apvts.addParameterListener (p->getParameterID(), this);
+    for (auto* p : getParameters())
+        apvts.addParameterListener (static_cast<juce::AudioProcessorParameterWithID*> (p)->paramID, this);
 
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
@@ -75,8 +75,8 @@ PreChorusProcessor::PreChorusProcessor()
 PreChorusProcessor::~PreChorusProcessor()
 {
     stopTimer();
-    for (auto* p : apvts.getParameterTree().getParameters())
-        apvts.removeParameterListener (p->getParameterID(), this);
+    for (auto* p : getParameters())
+        apvts.removeParameterListener (static_cast<juce::AudioProcessorParameterWithID*> (p)->paramID, this);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLayout()
@@ -131,7 +131,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::basscut, "Bass Cut", juce::NormalisableRange<float> (20.0f, 1000.0f, 1.0f, 0.35f), 80.0f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::resonance, "Resonance", juce::NormalisableRange<float> (0.1f, 4.0f, 0.05f), 0.707f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::tilt, "Tilt EQ", juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
-    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::presence, "Presence Air", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.30f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::presence, "Presence", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.30f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::air, "Air Sheen", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::space, "Space", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.35f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::drive, "Drive", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.20f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::transients, "Transients", juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
@@ -200,6 +201,7 @@ void PreChorusProcessor::resetEdits()
     setParam (IDs::freeze, 0.0f);
     setParam (IDs::revConverge, 0.0f);
     setParam (IDs::tilt, 0.0f);
+    setParam (IDs::air, 0.35f);
     setParam (IDs::drive, 0.2f);
     setParam (IDs::distance, 0.5f);
 }
@@ -221,6 +223,7 @@ void PreChorusProcessor::randomizePreChorus()
     setParam (IDs::overshoot, rnd (0.0f, 0.5f));
     setParam (IDs::orbit, rnd (0.0f, 0.6f));
     setParam (IDs::distance, rnd (0.2f, 0.8f));
+    setParam (IDs::air, rnd (0.1f, 0.6f));
     setParam (IDs::drive, rnd (0.1f, 0.5f));
     setParam (IDs::space, rnd (0.2f, 0.6f));
     setParam (IDs::shape, rnd (-0.2f, 0.7f));
@@ -230,6 +233,124 @@ void PreChorusProcessor::randomizePreChorus()
 void PreChorusProcessor::regenerateSeed()
 {
     setParam (IDs::seed, (float) juce::Random::getSystemRandom().nextInt (juce::Range<int> (1, 9999)));
+}
+
+juce::StringArray PreChorusProcessor::getFactoryPresetNames()
+{
+    return { "Pop Vocal Double", "EDM Riser Swarm", "Future Bass Shimmer", "Dubstep Chaos Impact",
+             "Intimate Whisper Build", "Cinematic Choir Pad", "Lo-Fi Bedroom Vocal",
+             "Ambient Drone Freeze", "Aggressive Distortion Drop", "Trap Vocal Stutter" };
+}
+
+void PreChorusProcessor::loadFactoryPreset (int index)
+{
+    // Shapes the swarm/tone/convergence character only; leaves source, capture, and per-take
+    // envelope trims untouched since those depend on the loaded/captured audio itself.
+    switch (index)
+    {
+        case 0: // Pop Vocal Double
+            setParam (IDs::voiceCount, 5.0f);      setParam (IDs::character, 1.0f);
+            setParam (IDs::voiceDensity, 0.1f);    setParam (IDs::progReveal, 0.3f);
+            setParam (IDs::timeSpread, 0.6f);      setParam (IDs::timeConverge, 0.9f);
+            setParam (IDs::pitchSpread, 4.0f);     setParam (IDs::detune, 12.0f);
+            setParam (IDs::pitchConverge, 0.95f);  setParam (IDs::panSpread, 0.4f);
+            setParam (IDs::focus, 0.3f);           setParam (IDs::tilt, 0.1f);
+            setParam (IDs::presence, 0.35f);       setParam (IDs::air, 0.2f);
+            setParam (IDs::drive, 0.1f);           setParam (IDs::space, 0.2f);
+            setParam (IDs::postRelease, 0.0f);     setParam (IDs::freeze, 0.0f);
+            break;
+        case 1: // EDM Riser Swarm
+            setParam (IDs::voiceCount, 26.0f);     setParam (IDs::character, 4.0f);
+            setParam (IDs::voiceDensity, 0.5f);    setParam (IDs::progReveal, 0.7f);
+            setParam (IDs::timeSpread, 2.2f);      setParam (IDs::timeConverge, 0.95f);
+            setParam (IDs::pitchSpread, 14.0f);    setParam (IDs::detune, 28.0f);
+            setParam (IDs::pitchConverge, 0.9f);   setParam (IDs::panSpread, 0.9f);
+            setParam (IDs::panConverge, 1.0f);     setParam (IDs::distance, 0.7f);
+            setParam (IDs::focus, 0.8f);           setParam (IDs::tilt, 0.3f);
+            setParam (IDs::presence, 0.6f);        setParam (IDs::air, 0.55f);
+            setParam (IDs::drive, 0.4f);           setParam (IDs::space, 0.5f);
+            setParam (IDs::postRelease, 0.0f);     setParam (IDs::dryReplace, 0.6f);
+            break;
+        case 2: // Future Bass Shimmer
+            setParam (IDs::voiceCount, 18.0f);     setParam (IDs::character, 5.0f);
+            setParam (IDs::voiceDensity, 0.2f);    setParam (IDs::progReveal, 0.5f);
+            setParam (IDs::timeSpread, 1.4f);      setParam (IDs::timeConverge, 0.8f);
+            setParam (IDs::pitchSpread, 9.0f);     setParam (IDs::detune, 22.0f);
+            setParam (IDs::pitchConverge, 0.75f);  setParam (IDs::scaleLock, 3.0f);
+            setParam (IDs::panSpread, 0.8f);       setParam (IDs::orbit, 0.3f);
+            setParam (IDs::tilt, 0.45f);           setParam (IDs::presence, 0.55f);
+            setParam (IDs::air, 0.65f);            setParam (IDs::space, 0.45f);
+            setParam (IDs::drive, 0.15f);          setParam (IDs::postRelease, 1.0f);
+            break;
+        case 3: // Dubstep Chaos Impact
+            setParam (IDs::voiceCount, 22.0f);     setParam (IDs::character, 2.0f);
+            setParam (IDs::voiceDensity, -0.3f);   setParam (IDs::progReveal, 0.2f);
+            setParam (IDs::revConverge, 1.0f);     setParam (IDs::timeConverge, 1.0f);
+            setParam (IDs::turbulence, 0.35f);     setParam (IDs::overshoot, 0.5f);
+            setParam (IDs::pitchSpread, 12.0f);    setParam (IDs::detune, 30.0f);
+            setParam (IDs::tilt, -0.2f);           setParam (IDs::drive, 0.55f);
+            setParam (IDs::transients, 1.0f);      setParam (IDs::dryReplace, 0.85f);
+            setParam (IDs::monoBass, 120.0f);      setParam (IDs::postRelease, 0.0f);
+            break;
+        case 4: // Intimate Whisper Build
+            setParam (IDs::voiceCount, 4.0f);      setParam (IDs::character, 0.0f);
+            setParam (IDs::voiceDensity, -0.2f);   setParam (IDs::progReveal, 0.15f);
+            setParam (IDs::timeSpread, 0.4f);      setParam (IDs::timeConverge, 0.7f);
+            setParam (IDs::pitchSpread, 2.0f);     setParam (IDs::detune, 6.0f);
+            setParam (IDs::panSpread, 0.2f);       setParam (IDs::focus, 0.1f);
+            setParam (IDs::tilt, 0.0f);            setParam (IDs::drive, 0.0f);
+            setParam (IDs::air, 0.15f);            setParam (IDs::space, 0.15f);
+            setParam (IDs::ducking, 0.3f);         setParam (IDs::freeze, 0.0f);
+            break;
+        case 5: // Cinematic Choir Pad
+            setParam (IDs::voiceCount, 32.0f);     setParam (IDs::character, 3.0f);
+            setParam (IDs::voiceDensity, 0.3f);    setParam (IDs::progReveal, 0.6f);
+            setParam (IDs::timeSpread, 2.5f);      setParam (IDs::timeConverge, 0.6f);
+            setParam (IDs::pitchSpread, 7.0f);     setParam (IDs::detune, 18.0f);
+            setParam (IDs::panSpread, 1.0f);       setParam (IDs::tail, 0.85f);
+            setParam (IDs::tilt, 0.15f);           setParam (IDs::presence, 0.4f);
+            setParam (IDs::air, 0.35f);            setParam (IDs::space, 0.75f);
+            setParam (IDs::postRelease, 1.0f);     setParam (IDs::freeze, 0.0f);
+            break;
+        case 6: // Lo-Fi Bedroom Vocal
+            setParam (IDs::voiceCount, 7.0f);      setParam (IDs::character, 7.0f);
+            setParam (IDs::voiceDensity, 0.0f);    setParam (IDs::progReveal, 0.3f);
+            setParam (IDs::timeSpread, 0.8f);      setParam (IDs::timeConverge, 0.85f);
+            setParam (IDs::pitchSpread, 5.0f);     setParam (IDs::detune, 15.0f);
+            setParam (IDs::tilt, -0.35f);          setParam (IDs::presence, 0.15f);
+            setParam (IDs::air, 0.05f);            setParam (IDs::drive, 0.25f);
+            setParam (IDs::monoBass, 90.0f);       setParam (IDs::space, 0.25f);
+            break;
+        case 7: // Ambient Drone Freeze
+            setParam (IDs::voiceCount, 30.0f);     setParam (IDs::character, 6.0f);
+            setParam (IDs::voiceDensity, -0.1f);   setParam (IDs::progReveal, 0.1f);
+            setParam (IDs::freeze, 1.0f);          setParam (IDs::timeSpread, 3.0f);
+            setParam (IDs::pitchSpread, 10.0f);    setParam (IDs::detune, 25.0f);
+            setParam (IDs::panSpread, 1.0f);       setParam (IDs::orbit, 0.6f);
+            setParam (IDs::tail, 1.0f);            setParam (IDs::space, 0.8f);
+            setParam (IDs::air, 0.3f);             setParam (IDs::drive, 0.05f);
+            break;
+        case 8: // Aggressive Distortion Drop
+            setParam (IDs::voiceCount, 20.0f);     setParam (IDs::character, 2.0f);
+            setParam (IDs::voiceDensity, 0.4f);    setParam (IDs::progReveal, 0.4f);
+            setParam (IDs::timeConverge, 1.0f);    setParam (IDs::pitchConverge, 1.0f);
+            setParam (IDs::focus, 1.0f);           setParam (IDs::tilt, -0.4f);
+            setParam (IDs::drive, 0.8f);           setParam (IDs::transients, 1.0f);
+            setParam (IDs::dryReplace, 1.0f);      setParam (IDs::monoBass, 150.0f);
+            setParam (IDs::postRelease, 0.0f);     setParam (IDs::distance, 0.8f);
+            break;
+        case 9: // Trap Vocal Stutter
+        default:
+            setParam (IDs::voiceCount, 12.0f);     setParam (IDs::character, 0.0f);
+            setParam (IDs::voiceDensity, 0.6f);    setParam (IDs::progReveal, 0.15f);
+            setParam (IDs::timeSpread, 0.5f);      setParam (IDs::timeConverge, 1.0f);
+            setParam (IDs::pitchSpread, 3.0f);     setParam (IDs::detune, 10.0f);
+            setParam (IDs::panSpread, 0.5f);       setParam (IDs::focus, 0.6f);
+            setParam (IDs::tilt, 0.2f);            setParam (IDs::drive, 0.3f);
+            setParam (IDs::air, 0.3f);             setParam (IDs::dryReplace, 0.7f);
+            break;
+    }
+    regenerateSeed();
 }
 
 void PreChorusProcessor::selectCaptureSlot (int slotIdx)
@@ -757,6 +878,40 @@ void PreChorusProcessor::render()
     {
         const float presGain = 1.0f + presenceAmt * 1.5f;
         applyIIR (juce::IIRCoefficients::makeHighShelf (sr, 10000.0, 0.707, presGain));
+    }
+
+    // High-frequency Air Exciter (filtered high-frequency excitation on ensemble and target)
+    const float airAmt = param (IDs::air);
+    if (airAmt > 0.01f)
+    {
+        juce::IIRFilter airHpL, airHpR;
+        airHpL.setCoefficients (juce::IIRCoefficients::makeHighPass (sr, 8500.0));
+        airHpR.setCoefficients (juce::IIRCoefficients::makeHighPass (sr, 8500.0));
+        float* ptrL = swarmBuffer.getWritePointer (0);
+        float* ptrR = swarmBuffer.getWritePointer (1);
+        for (int i = 0; i < totalSwarmLen; ++i)
+        {
+            const float hfL = airHpL.processSingleSampleRaw (ptrL[i]);
+            const float hfR = airHpR.processSingleSampleRaw (ptrR[i]);
+            ptrL[i] += std::tanh (hfL * (1.0f + airAmt * 2.5f)) * airAmt * 0.45f;
+            ptrR[i] += std::tanh (hfR * (1.0f + airAmt * 2.5f)) * airAmt * 0.45f;
+        }
+
+        if (source.getNumSamples() > 0)
+        {
+            juce::IIRFilter targetAirL, targetAirR;
+            targetAirL.setCoefficients (juce::IIRCoefficients::makeHighPass (sr, 8500.0));
+            targetAirR.setCoefficients (juce::IIRCoefficients::makeHighPass (sr, 8500.0));
+            float* sL = source.getWritePointer (0);
+            float* sR = source.getWritePointer (1);
+            for (int i = 0; i < source.getNumSamples(); ++i)
+            {
+                const float hfL = targetAirL.processSingleSampleRaw (sL[i]);
+                const float hfR = targetAirR.processSingleSampleRaw (sR[i]);
+                sL[i] += std::tanh (hfL * (1.0f + airAmt * 2.5f)) * airAmt * 0.45f;
+                sR[i] += std::tanh (hfR * (1.0f + airAmt * 2.5f)) * airAmt * 0.45f;
+            }
+        }
     }
 
     // 7. Mono Bass (Mono-maker below monoBass cutoff)
