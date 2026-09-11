@@ -126,6 +126,7 @@ public:
     void resized() override;
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int, int) override;
+    bool keyPressed (const juce::KeyPress& key) override;
 
 private:
     struct Knob

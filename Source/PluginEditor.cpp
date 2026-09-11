@@ -817,8 +817,10 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
 
     addChildComponent (help);
     setSize (1240, 840);
+    setWantsKeyboardFocus (true);
     startTimerHz (15);
     timerCallback();
+    grabKeyboardFocus();
 }
 
 PreChorusEditor::~PreChorusEditor()
@@ -1088,4 +1090,14 @@ void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
         if (proc.loadSampleFile (juce::File (f), true)) return;
+}
+
+bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::spaceKey)
+    {
+        proc.triggerPreview();
+        return true;
+    }
+    return false;
 }

@@ -80,6 +80,9 @@
 - **Follow Tempo**: Automatically recalculates voice paths and swell lengths whenever the DAW BPM shifts.
 - **Transport Recovery**: Detects DAW playhead jumps, loop restarts, or scrub discontinuities, immediately clearing voice buffers to prevent clicks or stale audio artifacts.
 - **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
+- **MIDI Triggered**: Any MIDI note-on received by the plugin fires the swarm (velocity-sensitive), so a DAW MIDI track can trigger the drop exactly on the beat.
+- **Drag-and-Drop Loading**: Drop a WAV/AIFF/FLAC/MP3/OGG file straight onto the plugin window to load it as the source.
+- **Spacebar Preview**: Press Space anywhere in the plugin window to trigger playback, same as the PLAY button.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
 
 ---
