@@ -149,6 +149,16 @@ void PCLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& labe
 
 // ---------------- 32-Voice Constellation Visualizer ----------------
 
+void VoiceOrbitVisualizer::timerCallback()
+{
+    phase += 0.025f;
+    const float lvl = proc.getOutputLevel();
+    if (lvl - smoothedOut > 0.12f) flashRing = 1.0f;
+    smoothedOut += (lvl - smoothedOut) * 0.35f;
+    flashRing *= 0.88f;
+    repaint();
+}
+
 void VoiceOrbitVisualizer::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat().reduced (3.0f);
@@ -165,6 +175,7 @@ void VoiceOrbitVisualizer::paint (juce::Graphics& g)
     const float orbitAmt = proc.param (IDs::orbit);
     const float space = proc.param (IDs::space);
     const float liveMeter = proc.getLiveInputMeter();
+    const float outLvl = juce::jlimit (0.0f, 1.0f, smoothedOut * 1.8f);
     const float pitchConverge = proc.param (IDs::pitchConverge);
     const float timeConverge = proc.param (IDs::timeConverge);
     const float turb = proc.param (IDs::turbulence);
@@ -174,7 +185,7 @@ void VoiceOrbitVisualizer::paint (juce::Graphics& g)
     for (int r = 1; r <= 3; ++r)
     {
         const float rad = maxRadius * (r / 3.0f);
-        g.setColour (PCColours::outline.withAlpha (0.35f));
+        g.setColour (PCColours::outline.interpolatedWith (PCColours::neon, outLvl * 0.5f).withAlpha (0.35f + outLvl * 0.25f));
         g.drawEllipse (center.x - rad, center.y - rad, rad * 2.0f, rad * 2.0f, 1.0f);
     }
 
@@ -202,18 +213,28 @@ void VoiceOrbitVisualizer::paint (juce::Graphics& g)
         const float x = center.x + std::cos (orbitAngle) * radX + jitter;
         const float y = center.y + std::sin (orbitAngle) * radY;
 
-        g.setColour (col.withAlpha (0.15f + pitchConverge * 0.2f));
-        g.drawLine (x, y, center.x, center.y, 1.0f);
+        g.setColour (col.withAlpha (0.15f + pitchConverge * 0.2f + outLvl * 0.3f));
+        g.drawLine (x, y, center.x, center.y, 1.0f + outLvl * 1.2f);
 
-        const float nodeSize = 3.5f + 3.0f * liveMeter;
-        g.setColour (col.interpolatedWith (PCColours::neon, vNorm));
+        const float nodeSize = 3.5f + 3.0f * liveMeter + 5.0f * outLvl;
+        const juce::Colour nodeCol = col.interpolatedWith (PCColours::neon, vNorm).interpolatedWith (PCColours::hitCol, outLvl * 0.6f);
+        g.setColour (nodeCol);
         g.fillEllipse (x - nodeSize * 0.5f, y - nodeSize * 0.5f, nodeSize, nodeSize);
     }
 
-    const float coreSize = 8.0f + 14.0f * liveMeter;
-    g.setColour (PCColours::hitCol.withAlpha (0.25f));
+    // Expanding shockwave ring on playback transient onset (audio-reactive flash)
+    if (flashRing > 0.02f)
+    {
+        const float ringRad = maxRadius * (0.25f + flashRing * 0.65f);
+        g.setColour (PCColours::hitCol.withAlpha (flashRing * 0.55f));
+        g.drawEllipse (center.x - ringRad, center.y - ringRad, ringRad * 2.0f, ringRad * 2.0f, 1.5f + flashRing * 3.0f);
+    }
+
+    const float coreSize = 8.0f + 14.0f * liveMeter + 20.0f * outLvl;
+    const juce::Colour coreCol = PCColours::accent.interpolatedWith (PCColours::hitCol, outLvl);
+    g.setColour (coreCol.withAlpha (0.25f + outLvl * 0.25f));
     g.fillEllipse (center.x - coreSize * 0.5f, center.y - coreSize * 0.5f, coreSize, coreSize);
-    g.setColour (PCColours::hitCol);
+    g.setColour (coreCol);
     g.fillEllipse (center.x - 3.0f, center.y - 3.0f, 6.0f, 6.0f);
 
     g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
@@ -405,8 +426,14 @@ void WaveformDisplay::paint (juce::Graphics& g)
     if (ph >= 0 && total > 0)
     {
         const float phX = p.getX() + ((float) ph / (float) total) * p.getWidth();
-        g.setColour (juce::Colours::white);
+        const float lvl = juce::jlimit (0.0f, 1.0f, proc.getOutputLevel() * 1.8f);
+        g.setColour (juce::Colours::white.interpolatedWith (PCColours::hitCol, lvl));
         g.drawVerticalLine ((int) phX, p.getY(), p.getBottom());
+        if (lvl > 0.05f)
+        {
+            g.setColour (PCColours::hitCol.withAlpha (lvl * 0.35f));
+            g.fillRect (phX - 2.0f - lvl * 3.0f, p.getY(), 4.0f + lvl * 6.0f, p.getHeight());
+        }
     }
 }
 

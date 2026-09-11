@@ -40,9 +40,10 @@ public:
     explicit VoiceOrbitVisualizer (PreChorusProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (30); }
     void paint (juce::Graphics&) override;
 private:
-    void timerCallback() override { phase += 0.025f; repaint(); }
+    void timerCallback() override;
     PreChorusProcessor& proc;
     float phase = 0.0f;
+    float smoothedOut = 0.0f, flashRing = 0.0f;
 };
 
 // Interactive Waveform Display with Tension Curves and Trim

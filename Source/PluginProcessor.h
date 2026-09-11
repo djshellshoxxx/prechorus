@@ -140,6 +140,7 @@ public:
     bool isCaptureArmed() const { return captureState.load() == CaptureState::armed; }
     CaptureState getCaptureState() const { return captureState.load(); }
     float getLiveInputMeter() const { return inputMeter.load(); }
+    float getOutputLevel() const { return outputMeter.load(); }
 
     void selectCaptureSlot (int slotIdx);
     int getActiveCaptureSlot() const { return activeSlot.load(); }
@@ -198,6 +199,7 @@ private:
     // Live Capture state
     std::atomic<CaptureState> captureState { CaptureState::idle };
     std::atomic<float> inputMeter { 0.0f };
+    std::atomic<float> outputMeter { 0.0f };
     juce::AudioBuffer<float> captureRingBuffer;
     int captureWritePos = 0;
     int captureTargetSamples = 0;

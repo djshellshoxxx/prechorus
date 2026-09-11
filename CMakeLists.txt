@@ -20,6 +20,8 @@ juce_add_plugin(PreChorus
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/icon_1024.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/icon_128.png"
     COPY_PLUGIN_AFTER_BUILD TRUE)
 
 juce_generate_juce_header(PreChorus)
@@ -36,4 +38,4 @@ target_compile_definitions(PreChorus PUBLIC
 
 target_link_libraries(PreChorus
     PRIVATE juce::juce_audio_utils
-    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)

@@ -576,6 +576,7 @@ void PreChorusProcessor::render()
     const int scaleMode = (int) param (IDs::scaleLock);
     const float panSpreadAmt = param (IDs::panSpread);
     const float panConvergeAmt = param (IDs::panConverge) * macroParam;
+    const float toneConvergeAmt = param (IDs::toneConverge) * macroParam;
     const float attractionAmt = param (IDs::attraction);
     const float turbulenceAmt = param (IDs::turbulence);
     const float overshootAmt = param (IDs::overshoot);
@@ -634,6 +635,11 @@ void PreChorusProcessor::render()
         const float initPan = (vNorm * 2.0f - 1.0f) * panSpreadAmt;
         float ageFilterL = 0.0f, ageFilterR = 0.0f;
         const float ageCoeff = juce::jlimit (0.0f, 0.85f, (1.0f - vNorm) * voiceAgeAmt);
+
+        // Tone Convergence: each voice starts with a scattered random brightness bias and
+        // converges toward the full (unfiltered) target spectrum as toneConvergeAmt * progress rises.
+        float toneFilterL = 0.0f, toneFilterR = 0.0f;
+        const float voiceToneRand = rnd.nextFloat();
 
         // Character mode state
         float bbdFilterL = 0.0f, bbdFilterR = 0.0f;
@@ -770,6 +776,17 @@ void PreChorusProcessor::render()
                 sampR = ageFilterR;
             }
 
+            // Tone Convergence: scattered bright/dark voices progressively match the target spectrum
+            const float toneFilterAmt = (1.0f - juce::jlimit (0.0f, 1.0f, toneConvergeAmt * effectiveProgress)) * voiceToneRand;
+            if (toneFilterAmt > 0.01f)
+            {
+                const float toneCoeff = 1.0f - toneFilterAmt * 0.85f;
+                toneFilterL += toneCoeff * (sampL - toneFilterL);
+                toneFilterR += toneCoeff * (sampR - toneFilterR);
+                sampL = toneFilterL;
+                sampR = toneFilterR;
+            }
+
             // Click Protection & Reverse Turnaround Fades (5ms cosine ramp)
             const int fadeLen = (int) (sr * 0.005);
             if (i - voiceStartSample < fadeLen)
@@ -824,6 +841,29 @@ void PreChorusProcessor::render()
         }
     }
 
+    // 4b. Transient Softening / Preservation (differential fast/slow envelope shaper)
+    const float transAmt = param (IDs::transients);
+    if (std::abs (transAmt) > 0.01f)
+    {
+        float fastEnvL = 0.0f, fastEnvR = 0.0f, slowEnvL = 0.0f, slowEnvR = 0.0f;
+        const float fastCoeff = 1.0f - std::exp (-1.0f / (0.001f * (float) sr));
+        const float slowCoeff = 1.0f - std::exp (-1.0f / (0.050f * (float) sr));
+        float* ptrL = swarmBuffer.getWritePointer (0);
+        float* ptrR = swarmBuffer.getWritePointer (1);
+        for (int i = 0; i < totalSwarmLen; ++i)
+        {
+            const float absL = std::abs (ptrL[i]), absR = std::abs (ptrR[i]);
+            fastEnvL += fastCoeff * (absL - fastEnvL);
+            fastEnvR += fastCoeff * (absR - fastEnvR);
+            slowEnvL += slowCoeff * (absL - slowEnvL);
+            slowEnvR += slowCoeff * (absR - slowEnvR);
+            const float transL = juce::jlimit (0.0f, 1.0f, (fastEnvL - slowEnvL) * 6.0f);
+            const float transR = juce::jlimit (0.0f, 1.0f, (fastEnvR - slowEnvR) * 6.0f);
+            ptrL[i] *= juce::jmax (0.0f, 1.0f + transAmt * transL * 0.9f);
+            ptrR[i] *= juce::jmax (0.0f, 1.0f + transAmt * transR * 0.9f);
+        }
+    }
+
     // 5. Space & 3D Distance Diffusion
     const float spaceAmt = param (IDs::space);
     if (spaceAmt > 0.01f || distanceAmt > 0.01f)
@@ -844,7 +884,7 @@ void PreChorusProcessor::render()
             idxL = (idxL + 1) % delayL;
             idxR = (idxR + 1) % delayR;
             ptrL[i] = inL * (1.0f - totalSpace * 0.35f) + dL * (totalSpace * 0.65f);
-            ptrR[i] = inR * (1.0f - totalSpace * 0.35f) + dR * (spaceAmt * 0.65f);
+            ptrR[i] = inR * (1.0f - totalSpace * 0.35f) + dR * (totalSpace * 0.65f);
         }
     }
 
@@ -1195,6 +1235,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         if (v.pos >= r->audio.getNumSamples()) v.active = false;
     }
     playhead.store (activePos);
+    outputMeter.store (buffer.getMagnitude (0, numSamples));
 }
 
 void PreChorusProcessor::startVoice (float gain)
@@ -1253,8 +1294,22 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter)
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0) return false;
     const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 12.0));
-    juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
-    reader->read (&buf, 0, len, 0, true, true);
+
+    // Always store stereo: the render engine unconditionally reads both channels of the
+    // source buffer, so a mono file loaded as a 1-channel buffer would read past the end
+    // of its channel pointer array later on. Duplicate mono sources to both channels.
+    juce::AudioBuffer<float> buf (2, len);
+    if (reader->numChannels >= 2)
+    {
+        reader->read (&buf, 0, len, 0, true, true);
+    }
+    else
+    {
+        juce::AudioBuffer<float> mono (1, len);
+        reader->read (&mono, 0, len, 0, true, true);
+        buf.copyFrom (0, 0, mono, 0, 0, len);
+        buf.copyFrom (1, 0, mono, 0, 0, len);
+    }
     {
         const juce::ScopedLock sl (sourceLock);
         loadedBuffer = std::move (buf);
@@ -1262,6 +1317,10 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter)
     }
     currentFile = f;
     refreshFolderList (f);
+    // Loading a file only has an audible effect in "Loaded Sample" (and later, "Hybrid"/
+    // "Slice Scatter") modes; "Live Capture" ignores loadedBuffer entirely. Switch out of
+    // Live Capture automatically so Load/drag-and-drop always does what the user expects.
+    if ((int) param (IDs::sourceMode) == 0) setParam (IDs::sourceMode, 1.0f);
     if (previewAfter) previewAfterRender = true;
     dirty = true;
     return true;
