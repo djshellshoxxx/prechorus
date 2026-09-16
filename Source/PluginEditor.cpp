@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "Tooltips.h"
 
 namespace PCColours
 {
@@ -7,144 +8,11 @@ namespace PCColours
         const float toneNorm = juce::jlimit (0.0f, 1.0f, (std::log10 (juce::jmax (200.0f, toneHz)) - 2.3f) / 2.0f);
         const float bassNorm = juce::jlimit (0.0f, 1.0f, (std::log10 (juce::jmax (20.0f, bassCutHz)) - 1.3f) / 1.7f);
 
-        juce::Colour c1 = accent; // Choral violet
-        juce::Colour c2 = neon;   // Cyber cyan
-        juce::Colour c3 = hitCol; // Climax amber
-
-        auto blend1 = c1.interpolatedWith (c2, toneNorm);
-        return blend1.interpolatedWith (c3, bassNorm * 0.4f);
+        // Dark tone reads as the secondary teal, bright tone as the primary accent,
+        // and a higher bass cut warms it towards the warning amber.
+        auto blend = neon.interpolatedWith (accent, toneNorm);
+        return blend.interpolatedWith (hitCol, bassNorm * 0.35f);
     }
-}
-
-// ---------------- LookAndFeel ----------------
-
-PCLookAndFeel::PCLookAndFeel()
-{
-    setColour (juce::Label::textColourId, PCColours::text);
-    setColour (juce::TextButton::textColourOffId, PCColours::text);
-    setColour (juce::TextButton::textColourOnId, PCColours::text);
-    setColour (juce::ComboBox::backgroundColourId, PCColours::panel);
-    setColour (juce::ComboBox::textColourId, PCColours::text);
-    setColour (juce::ComboBox::outlineColourId, PCColours::outline);
-    setColour (juce::PopupMenu::backgroundColourId, PCColours::panel2);
-    setColour (juce::PopupMenu::textColourId, PCColours::text);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, PCColours::accent.withAlpha (0.4f));
-}
-
-void PCLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h,
-                                      float pos, float startAngle, float endAngle, juce::Slider& s)
-{
-    auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (2.5f);
-    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const auto center = bounds.getCentre();
-    const float arcRadius = radius - 4.0f;
-    const float currentAngle = startAngle + pos * (endAngle - startAngle);
-
-    juce::Path bgArc;
-    bgArc.addCentredArc (center.x, center.y, arcRadius, arcRadius, 0.0f, startAngle, endAngle, true);
-    g.setColour (PCColours::outline);
-    g.strokePath (bgArc, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    if (pos > 0.001f)
-    {
-        juce::Path valArc;
-        valArc.addCentredArc (center.x, center.y, arcRadius, arcRadius, 0.0f, startAngle, currentAngle, true);
-        g.setColour (s.findColour (juce::Slider::rotarySliderFillColourId));
-        g.strokePath (valArc, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-
-    const float dialRadius = arcRadius - 4.5f;
-    g.setColour (PCColours::panel2);
-    g.fillEllipse (center.x - dialRadius, center.y - dialRadius, dialRadius * 2.0f, dialRadius * 2.0f);
-    g.setColour (PCColours::outline.brighter (0.08f));
-    g.drawEllipse (center.x - dialRadius, center.y - dialRadius, dialRadius * 2.0f, dialRadius * 2.0f, 1.0f);
-
-    juce::Path p;
-    const float pLen = dialRadius * 0.65f;
-    p.startNewSubPath (center.x + std::sin (currentAngle) * (dialRadius * 0.15f),
-                       center.y - std::cos (currentAngle) * (dialRadius * 0.15f));
-    p.lineTo (center.x + std::sin (currentAngle) * pLen,
-              center.y - std::cos (currentAngle) * pLen);
-    g.setColour (PCColours::text);
-    g.strokePath (p, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-}
-
-void PCLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool isOver, bool isDown)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (0.5f);
-    juce::Colour fill = b.findColour (juce::TextButton::buttonColourId, true);
-    if (! b.isColourSpecified (juce::TextButton::buttonColourId))
-        fill = PCColours::panel2;
-
-    if (isDown)       fill = fill.brighter (0.2f);
-    else if (isOver)  fill = fill.brighter (0.08f);
-
-    g.setColour (fill);
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (b.getToggleState() ? PCColours::accent : PCColours::outline);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-}
-
-void PCLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool isOver, bool)
-{
-    auto r = b.getLocalBounds().toFloat();
-    const float boxSize = 14.0f;
-    auto box = juce::Rectangle<float> (r.getX() + 2.0f, r.getCentreY() - boxSize * 0.5f, boxSize, boxSize);
-
-    g.setColour (PCColours::panel2);
-    g.fillRoundedRectangle (box, 3.0f);
-    g.setColour (isOver ? PCColours::accent : PCColours::outline);
-    g.drawRoundedRectangle (box, 3.0f, 1.0f);
-
-    if (b.getToggleState())
-    {
-        g.setColour (PCColours::accent);
-        g.fillRoundedRectangle (box.reduced (2.5f), 2.0f);
-    }
-
-    g.setColour (b.getToggleState() ? PCColours::text : PCColours::textDim);
-    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-    g.drawText (b.getButtonText(), r.withTrimmedLeft (boxSize + 6.0f), juce::Justification::centredLeft);
-}
-
-juce::Font PCLookAndFeel::getTextButtonFont (juce::TextButton&, int)
-{
-    return juce::Font (juce::FontOptions (9.5f, juce::Font::bold));
-}
-
-juce::Label* PCLookAndFeel::createSliderTextBox (juce::Slider& s)
-{
-    auto* l = LookAndFeel_V4::createSliderTextBox (s);
-    l->setFont (juce::Font (juce::FontOptions (9.5f)));
-    l->setColour (juce::Label::textColourId, PCColours::textDim);
-    l->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
-    l->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
-    return l;
-}
-
-void PCLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox& b)
-{
-    auto r = juce::Rectangle<int> (0, 0, w, h).toFloat().reduced (0.5f);
-    g.setColour (isDown ? PCColours::panel2.brighter (0.1f) : PCColours::panel2);
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (PCColours::outline);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-
-    juce::Path arrow;
-    const float ax = w - 12.0f;
-    const float ay = h * 0.5f;
-    arrow.startNewSubPath (ax - 3.0f, ay - 2.0f);
-    arrow.lineTo (ax, ay + 1.5f);
-    arrow.lineTo (ax + 3.0f, ay - 2.0f);
-    g.setColour (PCColours::textDim);
-    g.strokePath (arrow, juce::PathStrokeType (1.5f));
-}
-
-void PCLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
-{
-    label.setBounds (1, 1, box.getWidth() - 16, box.getHeight() - 2);
-    label.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-    label.setColour (juce::Label::textColourId, PCColours::text);
 }
 
 // ---------------- 32-Voice Constellation Visualizer ----------------
@@ -159,87 +27,273 @@ void VoiceOrbitVisualizer::timerCallback()
     repaint();
 }
 
+juce::Point<float> VoiceOrbitVisualizer::toPixels (float nx, float ny) const
+{
+    return { centre.x + nx * maxRadius, centre.y + ny * maxRadius * 0.82f };
+}
+
+juce::Point<float> VoiceOrbitVisualizer::toNormalised (juce::Point<float> px) const
+{
+    if (maxRadius <= 0.0f) return { 0.0f, 0.0f };
+    return { (px.x - centre.x) / maxRadius,
+             (px.y - centre.y) / (maxRadius * 0.82f) };
+}
+
+void VoiceOrbitVisualizer::mouseDown (const juce::MouseEvent& e)
+{
+    // Three right-clicks breed a red orb, four left-clicks split three orbs,
+    // two middle-clicks leave one of them carrying a clutch of eggs.
+    if (e.mods.isPopupMenu() || e.mods.isRightButtonDown()) proc.colonyRightClick();
+    else if (e.mods.isMiddleButtonDown())                   proc.colonyMiddleClick();
+    else
+    {
+        proc.colonyLeftClick();
+        const auto n = toNormalised (e.position);
+        proc.colonyClickAt (n.x, n.y);      // a yellow orb lights its fuse
+        proc.colonyBeginDrag (n.x, n.y);
+        dragging = proc.getColony().isDragging();
+    }
+
+    repaint();
+}
+
+void VoiceOrbitVisualizer::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragging) return;
+    const auto n = toNormalised (e.position);
+    proc.colonyDragTo (n.x, n.y);
+    repaint();
+}
+
+void VoiceOrbitVisualizer::mouseUp (const juce::MouseEvent&)
+{
+    if (! dragging) return;
+    dragging = false;
+    proc.colonyEndDrag();
+    repaint();
+}
+
+void VoiceOrbitVisualizer::drawFractal (juce::Graphics& g, juce::Point<float> from, float angle,
+                                        float len, int depth, juce::Colour col, float alpha) const
+{
+    if (depth <= 0 || len < 1.5f) return;
+
+    const juce::Point<float> to { from.x + std::cos (angle) * len,
+                                  from.y + std::sin (angle) * len };
+    g.setColour (col.withAlpha (alpha));
+    g.drawLine (from.x, from.y, to.x, to.y, juce::jmax (0.6f, len * 0.05f));
+
+    const float spread = 0.55f + 0.12f * (float) depth;
+    drawFractal (g, to, angle - spread, len * 0.62f, depth - 1, col, alpha * 0.72f);
+    drawFractal (g, to, angle + spread, len * 0.62f, depth - 1, col, alpha * 0.72f);
+}
+
 void VoiceOrbitVisualizer::paint (juce::Graphics& g)
 {
-    auto b = getLocalBounds().toFloat().reduced (3.0f);
-    g.setColour (PCColours::panel);
-    g.fillRoundedRectangle (b, 8.0f);
-    g.setColour (PCColours::outline);
-    g.drawRoundedRectangle (b, 8.0f, 1.0f);
+    auto b = getLocalBounds().toFloat();
+    g.setColour (PCTheme::panel);
+    g.fillRoundedRectangle (b, PCTheme::Metrics::radiusPanel);
+    g.setColour (PCTheme::edge);
+    g.drawRoundedRectangle (b.reduced (0.5f), PCTheme::Metrics::radiusPanel, 1.0f);
 
-    const auto center = b.getCentre();
-    const float maxRadius = juce::jmin (b.getWidth(), b.getHeight()) * 0.42f;
+    auto field = b.reduced (6.0f).withTrimmedTop (14.0f).withTrimmedBottom (14.0f);
+    centre = field.getCentre();
+    maxRadius = juce::jmin (field.getWidth(), field.getHeight()) * 0.46f;
 
-    const int voices = juce::jlimit (1, 32, (int) proc.param (IDs::voiceCount));
-    const float panSpread = proc.param (IDs::panSpread);
-    const float orbitAmt = proc.param (IDs::orbit);
-    const float space = proc.param (IDs::space);
-    const float liveMeter = proc.getLiveInputMeter();
+    const auto& colony = proc.getColony();
     const float outLvl = juce::jlimit (0.0f, 1.0f, smoothedOut * 1.8f);
-    const float pitchConverge = proc.param (IDs::pitchConverge);
-    const float timeConverge = proc.param (IDs::timeConverge);
-    const float turb = proc.param (IDs::turbulence);
+    const float liveMeter = proc.getLiveInputMeter();
+    const float space = proc.param (IDs::space);
+    const float ghost = proc.getGhostAmount();
     const bool isFrozen = proc.param (IDs::freeze) > 0.5f;
-    const bool isRevConv = proc.param (IDs::revConverge) > 0.5f;
 
+    const juce::Colour baseCol = isFrozen
+        ? PCColours::freezeCol
+        : PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
+
+    // Orbital guide rings
     for (int r = 1; r <= 3; ++r)
     {
-        const float rad = maxRadius * (r / 3.0f);
-        g.setColour (PCColours::outline.interpolatedWith (PCColours::neon, outLvl * 0.5f).withAlpha (0.35f + outLvl * 0.25f));
-        g.drawEllipse (center.x - rad, center.y - rad, rad * 2.0f, rad * 2.0f, 1.0f);
+        const float rad = maxRadius * ((float) r / 3.0f);
+        g.setColour (PCTheme::edge.interpolatedWith (PCColours::neon, outLvl * 0.5f)
+                                  .withAlpha (0.32f + outLvl * 0.25f));
+        g.drawEllipse (centre.x - rad, centre.y - rad * 0.82f, rad * 2.0f, rad * 1.64f, 1.0f);
     }
 
     if (space > 0.05f)
     {
         g.setColour (PCColours::accent.withAlpha (0.05f * space));
-        g.fillEllipse (center.x - maxRadius, center.y - maxRadius, maxRadius * 2.0f, maxRadius * 2.0f);
+        g.fillEllipse (centre.x - maxRadius, centre.y - maxRadius * 0.82f, maxRadius * 2.0f, maxRadius * 1.64f);
     }
 
-    const juce::Colour col = isFrozen ? PCColours::freezeCol : PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
-
-    for (int v = 0; v < voices; ++v)
+    // --- Eggs ---------------------------------------------------------------
+    for (const auto& egg : colony.getEggs())
     {
-        const float vNorm = (voices > 1) ? (float) v / (float) (voices - 1) : 0.5f;
-        const float orbitAngle = vNorm * juce::MathConstants<float>::twoPi + phase * (1.0f + orbitAmt * 1.5f);
+        if (! egg.alive) continue;
+        const auto p = toPixels (egg.x, egg.y);
+        const float imminent = juce::jlimit (0.0f, 1.0f, 1.0f - egg.hatchIn / 6.0f);
+        const float w = 5.0f + imminent * 2.5f;
+        const float h = w * 1.35f;
+        const auto hue = juce::Colour::fromHSV (egg.hue, 0.45f, 0.92f, 1.0f);
 
-        float distNorm = 0.35f + 0.65f * (1.0f - timeConverge * 0.5f);
-        if (isRevConv) distNorm = 0.9f - distNorm * 0.5f;
-        if (isFrozen) distNorm = 0.65f;
-
-        const float radX = maxRadius * distNorm * (0.6f + 0.4f * std::abs ((vNorm * 2.0f - 1.0f) * panSpread));
-        const float radY = maxRadius * distNorm * 0.75f;
-
-        const float jitter = (turb > 0.01f) ? std::sin (phase * 6.0f + (float) v) * turb * 5.0f : 0.0f;
-        const float x = center.x + std::cos (orbitAngle) * radX + jitter;
-        const float y = center.y + std::sin (orbitAngle) * radY;
-
-        g.setColour (col.withAlpha (0.15f + pitchConverge * 0.2f + outLvl * 0.3f));
-        g.drawLine (x, y, center.x, center.y, 1.0f + outLvl * 1.2f);
-
-        const float nodeSize = 3.5f + 3.0f * liveMeter + 5.0f * outLvl;
-        const juce::Colour nodeCol = col.interpolatedWith (PCColours::neon, vNorm).interpolatedWith (PCColours::hitCol, outLvl * 0.6f);
-        g.setColour (nodeCol);
-        g.fillEllipse (x - nodeSize * 0.5f, y - nodeSize * 0.5f, nodeSize, nodeSize);
+        g.setColour (hue.withAlpha (0.16f + imminent * 0.3f));
+        g.fillEllipse (p.x - w, p.y - h, w * 2.0f, h * 2.0f);
+        g.setColour (hue.withAlpha (0.55f + imminent * 0.45f));
+        g.drawEllipse (p.x - w * 0.5f, p.y - h * 0.5f, w, h, 1.0f);
     }
 
-    // Expanding shockwave ring on playback transient onset (audio-reactive flash)
+    // --- Orbs ---------------------------------------------------------------
+    const auto& orbs = colony.getOrbs();
+    int drawn = 0;
+    for (int i = 0; i < Colony::kMaxOrbs; ++i)
+    {
+        const auto& o = orbs[(size_t) i];
+        if (! o.alive) continue;
+
+        const auto p = toPixels (o.x, o.y);
+        const float vNorm = (float) (drawn % 16) / 15.0f;
+        ++drawn;
+
+        juce::Colour col;
+        if (o.kind == Colony::Kind::red)        col = PCTheme::clipRed;
+        else if (o.kind == Colony::Kind::green) col = PCTheme::signalOn;
+        else if (o.hatchling)                   col = juce::Colour::fromHSV (o.hue, 0.72f, 1.0f, 1.0f);
+        else col = baseCol.interpolatedWith (PCColours::neon, vNorm)
+                          .interpolatedWith (PCColours::hitCol, outLvl * 0.6f);
+
+        const float alpha = juce::jlimit (0.0f, 1.0f, o.fade) * juce::jlimit (0.2f, 1.0f, o.birth);
+
+        // Ghost tracers, left behind while the distress echo lasts
+        if (ghost > 0.01f && o.trailCount > 0)
+        {
+            for (int t = 0; t < o.trailCount; ++t)
+            {
+                const int idx = (o.trailWrite - 1 - t + Colony::Orb::kTrail * 2) % Colony::Orb::kTrail;
+                const auto tp = toPixels (o.trail[(size_t) idx].x, o.trail[(size_t) idx].y);
+                const float k = 1.0f - (float) t / (float) Colony::Orb::kTrail;
+                const float r = (2.6f + 2.4f * o.size) * k;
+                g.setColour (col.withAlpha (alpha * ghost * k * 0.34f));
+                g.fillEllipse (tp.x - r, tp.y - r, r * 2.0f, r * 2.0f);
+            }
+        }
+
+        // Tether back to the target
+        g.setColour (col.withAlpha (alpha * (0.12f + outLvl * 0.28f)));
+        g.drawLine (p.x, p.y, centre.x, centre.y, 1.0f + outLvl * 1.1f);
+
+        const float nodeSize = (3.2f + 2.6f * liveMeter + 4.6f * outLvl) * o.size;
+
+        if (o.kind == Colony::Kind::green)
+        {
+            g.setColour (col.withAlpha (alpha * 0.28f));
+            g.fillEllipse (p.x - nodeSize * 1.9f, p.y - nodeSize * 1.9f, nodeSize * 3.8f, nodeSize * 3.8f);
+        }
+
+        g.setColour (col.withAlpha (alpha));
+        g.fillEllipse (p.x - nodeSize * 0.5f, p.y - nodeSize * 0.5f, nodeSize, nodeSize);
+
+        // The orb in hand gets a halo that reddens as you haul it faster
+        if (i == colony.getDraggedOrb())
+        {
+            const float heat = juce::jlimit (0.0f, 1.0f, colony.getDragSpeed() / Colony::kFastDragSpeed);
+            const float ringR = nodeSize * 2.2f;
+            g.setColour (PCTheme::accent.interpolatedWith (PCTheme::clipRed, heat).withAlpha (0.85f));
+            g.drawEllipse (p.x - ringR, p.y - ringR, ringR * 2.0f, ringR * 2.0f, 1.4f);
+        }
+
+        // A carrying orb wears a ring until the clutch is laid
+        if (o.pregnant)
+        {
+            const float ringR = nodeSize * 1.5f;
+            g.setColour (PCTheme::warning.withAlpha (alpha * 0.85f));
+            g.drawEllipse (p.x - ringR, p.y - ringR, ringR * 2.0f, ringR * 2.0f, 1.2f);
+        }
+    }
+
+    // --- Fractals, thrown off by a slow drag --------------------------------
+    const float fractal = colony.getFractalAmount();
+    if (fractal > 0.01f)
+    {
+        const int dragged = colony.getDraggedOrb();
+        for (int i = 0; i < Colony::kMaxOrbs; ++i)
+        {
+            const auto& o = orbs[(size_t) i];
+            if (! o.alive) continue;
+            if (dragged >= 0 && i != dragged && (i % 5) != 0) continue;
+
+            const auto p = toPixels (o.x, o.y);
+            const float len = maxRadius * 0.24f * fractal;
+            const juce::Colour fc = (i == dragged) ? PCTheme::accent : PCColours::neon;
+            for (int arm = 0; arm < 3; ++arm)
+            {
+                const float a = o.angle + (float) arm * juce::MathConstants<float>::twoPi / 3.0f;
+                drawFractal (g, p, a, len, 4, fc, fractal * 0.65f);
+            }
+        }
+    }
+
+    // --- Detonation shockwave -----------------------------------------------
+    const float boom = colony.getExplosionFlash();
+    if (boom > 0.02f)
+    {
+        const auto c = toPixels (colony.getExplosionCentre().x, colony.getExplosionCentre().y);
+        const float ringRad = maxRadius * (0.15f + (1.0f - boom) * 1.1f);
+        g.setColour (PCTheme::clipRed.withAlpha (boom * 0.8f));
+        g.drawEllipse (c.x - ringRad, c.y - ringRad, ringRad * 2.0f, ringRad * 2.0f, 1.5f + boom * 4.0f);
+        g.setColour (PCTheme::warning.withAlpha (boom * 0.35f));
+        g.fillEllipse (c.x - ringRad * 0.45f, c.y - ringRad * 0.45f, ringRad * 0.9f, ringRad * 0.9f);
+    }
+
+    // Transient flash ring from playback
     if (flashRing > 0.02f)
     {
         const float ringRad = maxRadius * (0.25f + flashRing * 0.65f);
-        g.setColour (PCColours::hitCol.withAlpha (flashRing * 0.55f));
-        g.drawEllipse (center.x - ringRad, center.y - ringRad, ringRad * 2.0f, ringRad * 2.0f, 1.5f + flashRing * 3.0f);
+        g.setColour (PCColours::hitCol.withAlpha (flashRing * 0.5f));
+        g.drawEllipse (centre.x - ringRad, centre.y - ringRad, ringRad * 2.0f, ringRad * 2.0f, 1.5f + flashRing * 3.0f);
     }
 
-    const float coreSize = 8.0f + 14.0f * liveMeter + 20.0f * outLvl;
+    // --- Core ---------------------------------------------------------------
+    const float coreSize = 8.0f + 12.0f * liveMeter + 18.0f * outLvl;
     const juce::Colour coreCol = PCColours::accent.interpolatedWith (PCColours::hitCol, outLvl);
     g.setColour (coreCol.withAlpha (0.25f + outLvl * 0.25f));
-    g.fillEllipse (center.x - coreSize * 0.5f, center.y - coreSize * 0.5f, coreSize, coreSize);
+    g.fillEllipse (centre.x - coreSize * 0.5f, centre.y - coreSize * 0.5f, coreSize, coreSize);
     g.setColour (coreCol);
-    g.fillEllipse (center.x - 3.0f, center.y - 3.0f, 6.0f, 6.0f);
+    g.fillEllipse (centre.x - 3.0f, centre.y - 3.0f, 6.0f, 6.0f);
 
-    g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
-    g.setColour (isFrozen ? PCColours::freezeCol : PCColours::textDim);
-    g.drawText (isFrozen ? "SWARM FROZEN" : "32-VOICE CONSTELLATION", b.withTrimmedTop (4), juce::Justification::centredTop);
+    // --- Captions -----------------------------------------------------------
+    juce::String caption = isFrozen ? "SWARM FROZEN" : "COLONY";
+    if (proc.isDistressCallActive())   caption = "CALLING FOR HELP";
+    else if (colony.isReversing())     caption = "TIME TURNING";
+    else if (colony.isReversed())      caption = "REVERSED";
+    else if (fractal > 0.01f)          caption = "FRACTALISING";
+    else if (ghost > 0.01f)            caption = "ECHO";
+
+    g.setColour (proc.isDistressCallActive() ? PCTheme::warning
+                 : (colony.isReversing() || colony.isReversed()) ? PCColours::neon
+                 : (isFrozen ? PCColours::freezeCol : PCTheme::textMuted));
+    PCTheme::drawTracked (g, caption, b.withTrimmedTop (4.0f).withHeight (12.0f),
+                          juce::Justification::centred, PCTheme::labelFont (9.0f));
+
+    // Click-progress pips, so the gestures are discoverable
+    auto pipRow = b.withTrimmedBottom (3.0f).removeFromBottom (11.0f).reduced (8.0f, 0.0f);
+    auto drawPips = [&g, &pipRow] (const juce::String& tag, int done, int total, juce::Colour c)
+    {
+        auto cell = pipRow.removeFromLeft (pipRow.getWidth() / 3.0f);
+        g.setColour (PCTheme::textMuted);
+        PCTheme::drawTracked (g, tag, cell.removeFromLeft (14.0f), juce::Justification::centredLeft,
+                              PCTheme::labelFont (8.0f));
+        for (int i = 0; i < total; ++i)
+        {
+            const float d = 4.0f;
+            const float x = cell.getX() + (float) i * (d + 3.0f);
+            const float y = cell.getCentreY() - d * 0.5f;
+            if (i < done) { g.setColour (c); g.fillEllipse (x, y, d, d); }
+            else          { g.setColour (PCTheme::edge); g.drawEllipse (x, y, d, d, 1.0f); }
+        }
+    };
+    drawPips ("L", colony.getLeftClickProgress(),   Colony::kLeftClicksToSplit,        PCTheme::accent);
+    drawPips ("R", colony.getRightClickProgress(),  Colony::kRightClicksToSpawn,       PCTheme::clipRed);
+    drawPips ("M", colony.getMiddleClickProgress(), Colony::kMiddleClicksToImpregnate, PCTheme::warning);
 }
 
 // ---------------- Waveform Display ----------------
@@ -350,17 +404,17 @@ void WaveformDisplay::timerCallback()
 
 void WaveformDisplay::paint (juce::Graphics& g)
 {
-    auto b = getLocalBounds().toFloat().reduced (2.0f);
-    g.setColour (PCColours::panel);
-    g.fillRoundedRectangle (b, 8.0f);
-    g.setColour (PCColours::outline);
-    g.drawRoundedRectangle (b, 8.0f, 1.0f);
+    auto b = getLocalBounds().toFloat();
+    g.setColour (PCTheme::panel);
+    g.fillRoundedRectangle (b, PCTheme::Metrics::radiusPanel);
+    g.setColour (PCTheme::edge);
+    g.drawRoundedRectangle (b.reduced (0.5f), PCTheme::Metrics::radiusPanel, 1.0f);
 
     auto p = plot();
 
     if (cached != nullptr && cached->beats > 0)
     {
-        g.setColour (PCColours::outline.withAlpha (0.45f));
+        g.setColour (PCTheme::edge.withAlpha (0.45f));
         for (int i = 1; i < cached->beats; ++i)
         {
             const float x = p.getX() + (float) i / (float) cached->beats * p.getWidth();
@@ -368,7 +422,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
         }
     }
 
-    g.setColour (PCColours::outline.withAlpha (0.3f));
+    g.setColour (PCTheme::edge.withAlpha (0.35f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
 
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
@@ -392,7 +446,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
         const float lvl = v0 + (v1 - v0) * tensionCurve (norm, vt);
         volPath.lineTo (p.getX() + norm * p.getWidth(), volY (lvl));
     }
-    g.setColour (juce::Colours::white.withAlpha (0.8f));
+    g.setColour (PCTheme::textPrimary.withAlpha (0.8f));
     g.strokePath (volPath, juce::PathStrokeType (1.8f));
 
     g.setColour (PCColours::neon);
@@ -410,7 +464,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
         const float tx = p.getX() + tStart * p.getWidth();
         g.setColour (juce::Colours::black.withAlpha (0.5f));
         g.fillRect (p.getX(), p.getY(), tx - p.getX(), p.getHeight());
-        g.setColour (PCColours::textDim);
+        g.setColour (PCTheme::textMuted);
         g.drawVerticalLine ((int) tx, p.getY(), p.getBottom());
     }
     if (tEnd < 0.999f)
@@ -418,7 +472,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
         const float tx = p.getX() + tEnd * p.getWidth();
         g.setColour (juce::Colours::black.withAlpha (0.5f));
         g.fillRect (tx, p.getY(), p.getRight() - tx, p.getHeight());
-        g.setColour (PCColours::textDim);
+        g.setColour (PCTheme::textMuted);
         g.drawVerticalLine ((int) tx, p.getY(), p.getBottom());
     }
 
@@ -427,7 +481,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
     {
         const float phX = p.getX() + ((float) ph / (float) total) * p.getWidth();
         const float lvl = juce::jlimit (0.0f, 1.0f, proc.getOutputLevel() * 1.8f);
-        g.setColour (juce::Colours::white.interpolatedWith (PCColours::hitCol, lvl));
+        g.setColour (PCTheme::textPrimary.interpolatedWith (PCColours::hitCol, lvl));
         g.drawVerticalLine ((int) phX, p.getY(), p.getBottom());
         if (lvl > 0.05f)
         {
@@ -451,7 +505,16 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     if (e.position.getDistanceFrom ({ p.getX(), volY (v0) }) < 12.0f) drag = Drag::volStart;
     else if (e.position.getDistanceFrom ({ p.getRight(), volY (v1) }) < 12.0f) drag = Drag::volEnd;
     else if (e.position.getDistanceFrom ({ p.getCentreX(), volY (midLvl) }) < 12.0f) { drag = Drag::volTension; downA = vt; }
-    else { drag = Drag::none; proc.triggerPreview(); }
+    else { drag = Drag::none; if (! e.mods.isPopupMenu()) proc.triggerPreview(); }
+
+    if (e.mods.isPopupMenu())
+    {
+        const juce::String id = drag == Drag::volStart ? IDs::volStart
+                              : drag == Drag::volEnd   ? IDs::volEnd
+                              : drag == Drag::volTension ? IDs::volTension : juce::String();
+        drag = Drag::none;
+        if (id.isNotEmpty()) showParamContextMenu (*this, proc, id);
+    }
 }
 
 void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
@@ -477,15 +540,14 @@ void WaveformDisplay::mouseMove (const juce::MouseEvent&) {}
 
 void DragOutPad::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (over ? PCColours::panel2.brighter (0.15f) : PCColours::panel2);
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (over ? PCColours::neon : PCColours::outline);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (over ? PCTheme::panel.brighter (0.08f) : PCTheme::panel);
+    g.fillRoundedRectangle (r, PCTheme::Metrics::radiusPanel);
+    g.setColour (over ? PCColours::accent : PCTheme::edge);
+    g.drawRoundedRectangle (r, PCTheme::Metrics::radiusPanel, 1.0f);
 
-    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    g.setColour (over ? PCColours::neon : PCColours::text);
-    g.drawText ("DRAG TO DAW", getLocalBounds(), juce::Justification::centred);
+    g.setColour (over ? PCColours::accent : PCTheme::textMuted);
+    PCTheme::drawTracked (g, "DRAG TO DAW", r, juce::Justification::centred, PCTheme::headerFont (10.0f));
 }
 
 void DragOutPad::mouseDrag (const juce::MouseEvent&)
@@ -505,17 +567,30 @@ void DragOutPad::mouseDrag (const juce::MouseEvent&)
 
 // ---------------- Pitch Tension Curve Box ----------------
 
+void TensionBox::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        menuOpen = true;
+        showParamContextMenu (*this, proc, paramId);
+        return;
+    }
+    menuOpen = false;
+    downT = proc.param (paramId);
+    downY = e.y;
+}
+
 void TensionBox::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
 
-    g.setColour (PCColours::panel2);
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (PCColours::outline);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    g.setColour (PCTheme::panel);
+    g.fillRoundedRectangle (r, PCTheme::Metrics::radiusPanel);
+    g.setColour (PCTheme::edge);
+    g.drawRoundedRectangle (r, PCTheme::Metrics::radiusPanel, 1.0f);
 
-    // Center crosshair (neutral / linear reference)
-    g.setColour (PCColours::outline.withAlpha (0.6f));
+    // Diagonal reference: the linear, untensioned curve
+    g.setColour (PCTheme::edge.withAlpha (0.6f));
     g.drawLine (r.getX(), r.getBottom(), r.getRight(), r.getY(), 1.0f);
 
     const float t = proc.param (paramId);
@@ -531,232 +606,200 @@ void TensionBox::paint (juce::Graphics& g)
     g.setColour (PCColours::accent);
     g.strokePath (curve, juce::PathStrokeType (1.8f));
 
-    g.setFont (juce::Font (juce::FontOptions (7.5f, juce::Font::bold)));
-    g.setColour (PCColours::textDim);
-    g.drawText ("BEND", getLocalBounds().removeFromBottom (10), juce::Justification::centred);
+    g.setColour (PCTheme::textMuted);
+    PCTheme::drawTracked (g, "BEND", r.removeFromBottom (11.0f), juce::Justification::centred, PCTheme::labelFont (8.0f));
 }
 
-// ---------------- Help Overlay ----------------
+// ---------------- Gear (settings) button ----------------
 
-HelpOverlay::HelpOverlay()
+void GearButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
 {
-    setAlwaysOnTop (true);
-    body.setMultiLine (true);
-    body.setReadOnly (true);
-    body.setCaretVisible (false);
-    body.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
-    body.setColour (juce::TextEditor::textColourId, PCColours::text);
-    body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    body.setFont (juce::Font (juce::FontOptions (11.5f)));
-    body.setText (
-        "PRECHORUS - Complete 32-Voice Swarm & Convergence Engine\n\n"
-        "The Signature Sound: A cloud of related voices becoming progressively more recognizable "
-        "and coherent until they meet the original drop or event.\n\n"
-        "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
-        "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
-        "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
-        "Vocal Stutter). Presets only touch swarm/tone/convergence knobs, never your loaded audio.\n\n"
-        "CHARACTER MODES:\n"
-        "• Clean Digital: Pristine transparent sinc/linear interpolation.\n"
-        "• Analog Ensemble: Warm saturation, gentle drift, bandwidth contouring.\n"
-        "• Bucket-Brigade (BBD): Darker repeats, analog BBD clock roll-off, companding, and clock noise.\n"
-        "• Tape Choir: Wow & flutter pitch modulation and tape head saturation.\n"
-        "• Dimension: Ultra-wide cross-coupled chorusing designed to preserve solid mono center.\n"
-        "• String Ensemble: Solina-style multi-rate dual-LFO modulation.\n"
-        "• Granular Cloud: Micro-grain cloud with variable grain size and Hann windowing.\n"
-        "• Lo-Fi Choral: Vintage bit-depth and sample-rate reduction.\n\n"
-        "GLOBAL SHAPING & MOTION:\n"
-        "• 3D Distance: Doppler distance staging (far cavern wash -> upfront dry impact).\n"
-        "• Focus: Accelerates convergence near the drop into laser focus.\n"
-        "• Tilt EQ, Presence & Air: Spectral balance pivot, presence lift, and filtered HF air excitation.\n"
-        "• Mono Bass: High-passes side channel below cutoff frequency (pure mono sub-bass).\n"
-        "• Ducking: Sidechains and ducks the swell when live input vocals/hits strike.\n"
-    );
-    addAndMakeVisible (body);
-    addAndMakeVisible (closeButton);
-    closeButton.onClick = [this] { setVisible (false); };
-}
+    auto r = getLocalBounds().toFloat().reduced (2.0f);
+    const auto c = r.getCentre();
+    const float outer = juce::jmin (r.getWidth(), r.getHeight()) * 0.5f;
 
-void HelpOverlay::paint (juce::Graphics& g)
-{
-    g.fillAll (juce::Colours::black.withAlpha (0.75f));
-    auto r = getLocalBounds().reduced (50).toFloat();
-    g.setColour (PCColours::panel);
-    g.fillRoundedRectangle (r, 12.0f);
-    g.setColour (PCColours::accent);
-    g.drawRoundedRectangle (r, 12.0f, 1.5f);
-}
+    juce::Colour col = isDown ? PCTheme::accent : (isOver ? PCTheme::textPrimary : PCTheme::textMuted);
+    g.setColour (col);
 
-void HelpOverlay::resized()
-{
-    auto r = getLocalBounds().reduced (60);
-    closeButton.setBounds (r.removeFromBottom (32).withSizeKeepingCentre (120, 30));
-    r.removeFromBottom (10);
-    body.setBounds (r);
+    juce::Path teeth;
+    for (int i = 0; i < 8; ++i)
+    {
+        const float a = juce::MathConstants<float>::twoPi * (float) i / 8.0f;
+        const float tw = 0.30f;
+        juce::Path tooth;
+        tooth.addRectangle (-outer * 0.16f, -outer, outer * 0.32f, outer * tw + outer * 0.55f);
+        teeth.addPath (tooth, juce::AffineTransform::rotation (a).translated (c.x, c.y));
+    }
+    g.fillPath (teeth);
+    g.fillEllipse (c.x - outer * 0.62f, c.y - outer * 0.62f, outer * 1.24f, outer * 1.24f);
+
+    g.setColour (PCTheme::bgBase);
+    g.fillEllipse (c.x - outer * 0.26f, c.y - outer * 0.26f, outer * 0.52f, outer * 0.52f);
 }
 
 // ---------------- PreChorus Editor ----------------
 
 PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), visualizer (p), dragPad (p),
-      pitchTension (p, IDs::pitchTension)
+    : AudioProcessorEditor (&p), proc (p),
+      outputMeter ([&p] { return p.getOutputLevel(); }, "OUT"),
+      outputLed ([&p] { return p.getOutputLevel(); }),
+      waveform (p), visualizer (p), dragPad (p),
+      pitchTension (p, IDs::pitchTension),
+      options (p)
 {
     setLookAndFeel (&lnf);
 
-    title.setText ("PRECHORUS", juce::dontSendNotification);
-    title.setFont (juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
-    title.setColour (juce::Label::textColourId, PCColours::text);
+    // ---- Header strip ----
+    title.setText ("PreChorus", juce::dontSendNotification);
+    title.setFont (PCTheme::titleFont (14.0f));
+    title.setColour (juce::Label::textColourId, PCTheme::textPrimary);
     addAndMakeVisible (title);
 
-    subtitle.setText ("SWARM & CONVERGENCE ENGINE", juce::dontSendNotification);
-    subtitle.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
-    subtitle.setColour (juce::Label::textColourId, PCColours::accent);
+    subtitle.setText ("SWARM & CONVERGENCE", juce::dontSendNotification);
+    subtitle.setFont (PCTheme::labelFont (8.5f));
+    subtitle.setColour (juce::Label::textColourId, PCTheme::textMuted);
     addAndMakeVisible (subtitle);
 
-    fileLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
-    fileLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    menuButton.setTooltip (PCTips::menuButton());
+    menuButton.onClick = [this] { showFileMenu(); };
+    addAndMakeVisible (menuButton);
+
+    helpButton.setTooltip (PCTips::helpButton());
+    helpButton.onClick = [this] { help.setVisible (true); };
+    addAndMakeVisible (helpButton);
+
+    gearButton.setTooltip (PCTips::gearButton());
+    gearButton.onClick = [this] { options.setVisible (true); };
+    addAndMakeVisible (gearButton);
+
+    for (auto* b : { &aButton, &bButton })
+    {
+        b->setTooltip (PCTips::abButton());
+        b->setClickingTogglesState (false);
+        addAndMakeVisible (*b);
+    }
+    aButton.onClick = [this] { proc.setABSlot (0); };
+    bButton.onClick = [this] { proc.setABSlot (1); };
+    copyABButton.setTooltip (PCTips::abButton());
+    copyABButton.onClick = [this] { proc.copyABSlot(); };
+    addAndMakeVisible (copyABButton);
+
+    outputMeter.setTooltip (PCTips::meter());
+    addAndMakeVisible (outputMeter);
+
+    outputLed.setTooltip (PCTips::outputLed());
+    addAndMakeVisible (outputLed);
+
+    presetCombo.setTextWhenNothingSelected ("FACTORY PRESETS");
+    presetCombo.addItemList (PreChorusProcessor::getFactoryPresetNames(), 1);
+    presetCombo.setTooltip (PCTips::presetCombo());
+    presetCombo.onChange = [this]
+    {
+        const int idx = presetCombo.getSelectedItemIndex();
+        if (idx >= 0) { proc.loadFactoryPreset (idx); waveform.rebuild(); }
+    };
+    addAndMakeVisible (presetCombo);
+
+    // ---- Source row ----
+    fileLabel.setFont (PCTheme::valueFont (11.0f));
+    fileLabel.setColour (juce::Label::textColourId, PCTheme::textMuted);
     addAndMakeVisible (fileLabel);
 
-    countLabel.setFont (juce::Font (juce::FontOptions (9.5f)));
-    countLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    countLabel.setFont (PCTheme::monoFont (10.0f));
+    countLabel.setColour (juce::Label::textColourId, PCTheme::textMuted);
+    countLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (countLabel);
 
     rangeLabel.setText ("RANGE", juce::dontSendNotification);
-    rangeLabel.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
-    rangeLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    rangeLabel.setFont (PCTheme::labelFont (8.0f));
+    rangeLabel.setColour (juce::Label::textColourId, PCTheme::textMuted);
     rangeLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (rangeLabel);
 
-    confidenceLabel.setText ("TARGET CONFIDENCE: 100%", juce::dontSendNotification);
-    confidenceLabel.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+    confidenceLabel.setFont (PCTheme::monoFont (10.0f));
     confidenceLabel.setColour (juce::Label::textColourId, PCColours::neon);
     confidenceLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (confidenceLabel);
 
-    addAndMakeVisible (prevButton);
-    addAndMakeVisible (nextButton);
-    addAndMakeVisible (loadButton);
-    addAndMakeVisible (playButton);
-    addAndMakeVisible (exportButton);
-    addAndMakeVisible (resetButton);
-    addAndMakeVisible (randomButton);
-    addAndMakeVisible (regenSeedButton);
-    addAndMakeVisible (helpButton);
+    prevButton.setTooltip (PCTips::prevButton());
+    nextButton.setTooltip (PCTips::nextButton());
+    loadButton.setTooltip (PCTips::loadButton());
+    playButton.setTooltip (PCTips::playButton());
+    exportButton.setTooltip (PCTips::exportButton());
+    resetButton.setTooltip (PCTips::resetButton());
+    randomButton.setTooltip (PCTips::randomButton());
+    regenSeedButton.setTooltip (PCTips::regenButton());
+    dragPad.setTooltip (PCTips::dragPad());
+    waveform.setTooltip (PCTips::waveform());
+    visualizer.setTooltip (PCTips::visualizer());
+
+    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton,
+                     &resetButton, &randomButton, &regenSeedButton })
+        addAndMakeVisible (*b);
 
     prevButton.onClick = [this] { proc.prevSample(); waveform.rebuild(); };
     nextButton.onClick = [this] { proc.nextSample(); waveform.rebuild(); };
-    loadButton.onClick = [this] {
-        chooser = std::make_unique<juce::FileChooser> ("Load Vocal or Sample Stem", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
+    loadButton.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Load Vocal or Sample Stem", juce::File(),
+                                                       "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-            [this] (const juce::FileChooser& fc) {
+            [this] (const juce::FileChooser& fc)
+            {
                 auto f = fc.getResult();
                 if (f.existsAsFile()) { proc.loadSampleFile (f, true); waveform.rebuild(); }
             });
     };
     playButton.onClick      = [this] { proc.triggerPreview(); };
-    resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); };
+    resetButton.onClick     = [this] { proc.resetAllToDefaults(); presetCombo.setSelectedId (0, juce::dontSendNotification); waveform.rebuild(); };
     randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); };
     regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); };
-    helpButton.onClick      = [this] { help.setVisible (true); };
+    exportButton.onClick    = [this] { doExportWav(); };
 
-    exportButton.onClick = [this] {
-        chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-            [this] (const juce::FileChooser& fc) {
-                auto f = fc.getResult();
-                if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav"));
-            });
-    };
+    // ---- Combo boxes ----
+    sourceModeCombo  = makeCombo (IDs::sourceMode,     { "Live Capture", "Loaded Sample", "Hybrid Layer", "Slice Scatter" }, sourceModeAtt);
+    charCombo        = makeCombo (IDs::character,      { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir",
+                                                         "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral" }, charAtt);
+    captureCombo     = makeCombo (IDs::captureMode,    { "Threshold", "1/16 Note", "1/8 Note", "1/4 Beat", "1/2 Note",
+                                                         "1 Bar", "2 Bars", "Manual" }, captureComboAtt);
+    scaleCombo       = makeCombo (IDs::scaleLock,      { "Chromatic", "Major", "Minor", "Pentatonic", "Oct / 5ths" }, scaleComboAtt);
+    dirCombo         = makeCombo (IDs::voiceDirection, { "Forward", "Reverse", "Alternating", "Random" }, dirComboAtt);
+    postReleaseCombo = makeCombo (IDs::postRelease,    { "Cut at Impact", "Sustain Chorus", "Scatter Out" }, postReleaseAtt);
+    seqCombo         = makeCombo (IDs::sequence,       { "Every Note", "Beat 1 Only", "Every 2 Bars", "Every 4 Bars" }, seqAtt);
+    syncCombo        = makeCombo (IDs::syncLen,        { "1/2 Bar", "1 Bar", "2 Bars", "4 Bars" }, syncComboAtt);
+    rangeCombo       = makeCombo (IDs::pitchRange,     { "1 Oct", "2 Oct", "4 Oct" }, rangeComboAtt);
 
-    // Combos
-    sourceModeCombo.addItemList (juce::StringArray { "Live Capture", "Loaded Sample", "Hybrid Layer", "Slice Scatter" }, 1);
-    addAndMakeVisible (sourceModeCombo);
-    sourceModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sourceMode, sourceModeCombo);
+    // ---- Toggles ----
+    freezeToggle      = makeToggle (IDs::freeze,      "Freeze",   freezeAtt);
+    revConvergeToggle = makeToggle (IDs::revConverge, "Rev Conv", revConvergeAtt);
+    alignToggle       = makeToggle (IDs::align,       "Hit on note (PDC)", alignAtt);
+    syncToggle        = makeToggle (IDs::sync,        "Sync",     syncAtt);
 
-    scaleCombo.addItemList (juce::StringArray { "Chromatic", "Major", "Minor", "Pentatonic", "Oct / 5ths" }, 1);
-    addAndMakeVisible (scaleCombo);
-    scaleComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::scaleLock, scaleCombo);
-
-    dirCombo.addItemList (juce::StringArray { "Forward", "Reverse", "Alternating", "Random" }, 1);
-    addAndMakeVisible (dirCombo);
-    dirComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::voiceDirection, dirCombo);
-
-    postReleaseCombo.addItemList (juce::StringArray { "Cut at Impact", "Sustain Chorus", "Scatter Out" }, 1);
-    addAndMakeVisible (postReleaseCombo);
-    postReleaseAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::postRelease, postReleaseCombo);
-
-    charCombo.addItemList (juce::StringArray { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir", "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral" }, 1);
-    addAndMakeVisible (charCombo);
-    charAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::character, charCombo);
-
-    seqCombo.addItemList (juce::StringArray { "Every Note", "Beat 1 Only", "Every 2 Bars", "Every 4 Bars" }, 1);
-    addAndMakeVisible (seqCombo);
-    seqAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sequence, seqCombo);
-
-    presetCombo.setTextWhenNothingSelected ("FACTORY PRESETS");
-    presetCombo.addItemList (PreChorusProcessor::getFactoryPresetNames(), 1);
-    addAndMakeVisible (presetCombo);
-    presetCombo.onChange = [this] {
-        const int idx = presetCombo.getSelectedItemIndex();
-        if (idx >= 0) { proc.loadFactoryPreset (idx); waveform.rebuild(); }
-    };
-
-    // Live Capture Controls & History
+    // ---- Live capture controls & history ----
+    armButton.setTooltip (PCTips::armButton());
+    captureButton.setTooltip (PCTips::captureButton());
+    lockButton.setTooltip (PCTips::lockButton());
     addAndMakeVisible (armButton);
     addAndMakeVisible (captureButton);
     addAndMakeVisible (lockButton);
-    armButton.onClick = [this] {
-        if (proc.isCaptureArmed()) proc.stopCapture();
-        else proc.armCapture();
-    };
-    captureButton.onClick = [this] {
-        proc.triggerManualCapture();
-        waveform.rebuild();
-    };
-    lockButton.onClick = [this] {
-        proc.setCaptureLock (! proc.isCaptureLocked());
-    };
 
-    captureCombo.addItemList (juce::StringArray { "Threshold", "1/16 Note", "1/8 Note", "1/4 Beat", "1/2 Note", "1 Bar", "2 Bars", "Manual" }, 1);
-    addAndMakeVisible (captureCombo);
-    captureComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::captureMode, captureCombo);
+    armButton.onClick     = [this] { proc.isCaptureArmed() ? proc.stopCapture() : proc.armCapture(); };
+    captureButton.onClick = [this] { proc.triggerManualCapture(); waveform.rebuild(); };
+    lockButton.onClick    = [this] { proc.setCaptureLock (! proc.isCaptureLocked()); };
 
     for (int i = 0; i < 8; ++i)
     {
-        historySlotButtons[(size_t) i].setButtonText (juce::String (i + 1));
-        historySlotButtons[(size_t) i].onClick = [this, i] {
-            proc.selectCaptureSlot (i);
-            waveform.rebuild();
-        };
-        addAndMakeVisible (historySlotButtons[(size_t) i]);
+        auto b = std::make_unique<PCTextButton> (juce::String (i + 1));
+        b->setTooltip (PCTips::historySlot());
+        b->onClick = [this, i] { proc.selectCaptureSlot (i); waveform.rebuild(); };
+        addAndMakeVisible (*b);
+        historySlotButtons[(size_t) i] = std::move (b);
     }
 
-    // Toggles
-    freezeAtt     = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::freeze, freezeToggle);
-    revConvergeAtt= std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::revConverge, revConvergeToggle);
-    alignAtt      = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
-    syncAtt       = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync,  syncToggle);
+    addChildComponent (help);
+    addChildComponent (options);
 
-    addAndMakeVisible (freezeToggle);
-    addAndMakeVisible (revConvergeToggle);
-    addAndMakeVisible (alignToggle);
-    addAndMakeVisible (syncToggle);
-
-    syncCombo.addItemList (juce::StringArray { "1/2 Bar", "1 Bar", "2 Bars", "4 Bars" }, 1);
-    addAndMakeVisible (syncCombo);
-    syncComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncLen, syncCombo);
-
-    rangeCombo.addItemList (juce::StringArray { "1 Oct", "2 Oct", "4 Oct" }, 1);
-    addAndMakeVisible (rangeCombo);
-    rangeComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::pitchRange, rangeCombo);
-
-    // Visualizers
-    addAndMakeVisible (visualizer);
-    addAndMakeVisible (waveform);
-    addAndMakeVisible (dragPad);
-    addAndMakeVisible (pitchTension);
-
-    // Knobs - Swarm Engine
+    // ---- Knobs ----
     kVoiceCount   = &makeKnob (IDs::voiceCount,   "VOICES");
     kVoiceDensity = &makeKnob (IDs::voiceDensity, "DENSITY");
     kVoiceAge     = &makeKnob (IDs::voiceAge,     "VOICE AGE");
@@ -764,11 +807,10 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kHumanize     = &makeKnob (IDs::humanize,     "HUMANIZE");
     kGrainSize    = &makeKnob (IDs::grainSize,    "GRAIN MS");
 
-    // Knobs - Convergence Engine & Macro
     kMacro         = &makeKnob (IDs::macro,         "MACRO");
     kTimeSpread    = &makeKnob (IDs::timeSpread,    "TIME SPREAD");
     kTimeConverge  = &makeKnob (IDs::timeConverge,  "TIME CONV");
-    kPitchSpread   = &makeKnob (IDs::pitchSpread,   "PITCH SPREAD");
+    kPitchSpread   = &makeKnob (IDs::pitchSpread,   "PITCH SPRD");
     kDetune        = &makeKnob (IDs::detune,        "DETUNE");
     kPitchConverge = &makeKnob (IDs::pitchConverge, "PITCH CONV");
     kPanSpread     = &makeKnob (IDs::panSpread,     "PAN SPREAD");
@@ -776,14 +818,12 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kToneConverge  = &makeKnob (IDs::toneConverge,  "TONE CONV");
     kFocus         = &makeKnob (IDs::focus,         "FOCUS");
 
-    // Knobs - Physics & Spatial
     kAttraction = &makeKnob (IDs::attraction, "ATTRACT");
     kTurbulence = &makeKnob (IDs::turbulence, "TURBULENCE");
     kOvershoot  = &makeKnob (IDs::overshoot,  "OVERSHOOT");
     kOrbit      = &makeKnob (IDs::orbit,      "ORBIT");
     kDistance   = &makeKnob (IDs::distance,   "3D DISTANCE");
 
-    // Knobs - Swell & Tone Shaping
     kTail       = &makeKnob (IDs::tail,       "LENGTH");
     kShape      = &makeKnob (IDs::shape,      "SHAPE");
     kTone       = &makeKnob (IDs::tone,       "TONE");
@@ -798,25 +838,63 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kFormant    = &makeKnob (IDs::formant,    "FORMANT");
     kMonoBass   = &makeKnob (IDs::monoBass,   "MONO BASS");
 
-    // Knobs - Mix & Capture
     kDry        = &makeKnob (IDs::dry,        "HIT DRY");
     kWet        = &makeKnob (IDs::wet,        "SWARM WET");
     kDryReplace = &makeKnob (IDs::dryReplace, "REPLACE");
     kDucking    = &makeKnob (IDs::ducking,    "DUCKING");
     kThresh     = &makeKnob (IDs::thresh,     "THRESH");
 
-    // Knobs - Pitch & Volume
     kPitch      = &makeKnob (IDs::pitch,      "PITCH");
     kVolStart   = &makeKnob (IDs::volStart,   "START");
     kVolEnd     = &makeKnob (IDs::volEnd,     "END");
     kVolTension = &makeKnob (IDs::volTension, "TENSION");
 
-    kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
-    kMacro->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
-    kDistance->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
+    kDry->slider->setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
+    kMacro->slider->setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
+    kDistance->slider->setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
 
-    addChildComponent (help);
-    setSize (1240, 840);
+    // ---- Colony controls ----
+    gravityAddButton.setTooltip (PCTips::gravityAdd());
+    gravityReleaseButton.setTooltip (PCTips::gravityRelease());
+    enzymeButton.setTooltip (PCTips::enzyme());
+    gammaButton.setTooltip (PCTips::gamma());
+
+    gravityAddButton.setAccentColour (PCTheme::accent2);
+    gravityReleaseButton.setAccentColour (PCTheme::accent2);
+    enzymeButton.setAccentColour (PCTheme::signalOn);
+    gammaButton.setAccentColour (PCTheme::warning);
+    waterButton.setAccentColour (PCTheme::accent2);
+    waterButton.setTooltip (PCTips::water());
+
+    gravityAddButton.onClick     = [this] { proc.colonyAddGravity(); };
+    gravityReleaseButton.onClick = [this] { proc.colonyReleaseGravity(); };
+    enzymeButton.onClick         = [this] { proc.colonyAddEnzyme(); };
+    gammaButton.onClick          = [this] { proc.colonyAddGamma(); };
+    waterButton.onClick          = [this] { proc.colonyAddWater(); };
+
+    for (auto* b : { &gravityAddButton, &gravityReleaseButton, &enzymeButton, &gammaButton, &waterButton })
+        addAndMakeVisible (*b);
+
+    scoreLabel.setFont (PCTheme::monoFont (13.0f));
+    scoreLabel.setColour (juce::Label::textColourId, PCTheme::accent);
+    scoreLabel.setJustificationType (juce::Justification::centredLeft);
+    scoreLabel.setTooltip (PCTips::score());
+    addAndMakeVisible (scoreLabel);
+
+    colonyStatus.setFont (PCTheme::monoFont (10.0f));
+    colonyStatus.setColour (juce::Label::textColourId, PCTheme::textMuted);
+    colonyStatus.setJustificationType (juce::Justification::centredRight);
+    colonyStatus.setTooltip (PCTips::colonyStatus());
+    addAndMakeVisible (colonyStatus);
+
+    addAndMakeVisible (visualizer);
+    addAndMakeVisible (waveform);
+    addAndMakeVisible (dragPad);
+    addAndMakeVisible (pitchTension);
+    pitchTension.setTooltip (PCTips::forParam (IDs::pitchTension));
+
+    refreshTooltipMode();
+    setSize (1240, 856);
     setWantsKeyboardFocus (true);
     startTimerHz (15);
     timerCallback();
@@ -828,256 +906,493 @@ PreChorusEditor::~PreChorusEditor()
     setLookAndFeel (nullptr);
 }
 
+std::unique_ptr<PCComboBox> PreChorusEditor::makeCombo (const juce::String& id, const juce::StringArray& items,
+                                                        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& att)
+{
+    auto box = std::make_unique<PCComboBox> (proc, id);
+    box->addItemList (items, 1);
+    box->setTooltip (PCTips::forParam (id));
+    addAndMakeVisible (*box);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, id, *box);
+    return box;
+}
+
+std::unique_ptr<PCToggleButton> PreChorusEditor::makeToggle (const juce::String& id, const juce::String& text,
+                                                             std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>& att)
+{
+    auto b = std::make_unique<PCToggleButton> (proc, id, text);
+    b->setTooltip (PCTips::forParam (id));
+    addAndMakeVisible (*b);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, id, *b);
+    return b;
+}
+
 PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const juce::String& textName)
 {
     auto k = std::make_unique<Knob>();
-    auto& s = k->slider;
-    s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 62, 13);
-    s.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
-    s.setColour (juce::Slider::rotarySliderFillColourId, PCColours::accent);
-    addAndMakeVisible (s);
+    k->slider = std::make_unique<PCSlider> (proc, id);
+    k->slider->setTooltip (PCTips::forParam (id));
+    addAndMakeVisible (*k->slider);
 
     k->label.setText (textName, juce::dontSendNotification);
-    k->label.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+    k->label.setFont (PCTheme::labelFont (PCTheme::Metrics::labelSize));
     k->label.setJustificationType (juce::Justification::centred);
-    k->label.setColour (juce::Label::textColourId, PCColours::textDim);
+    k->label.setMinimumHorizontalScale (0.65f);   // squeeze long names rather than truncate them
+    k->label.setColour (juce::Label::textColourId, PCTheme::textMuted);
+    k->label.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (k->label);
 
-    k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, s);
+    k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, *k->slider);
     knobs.push_back (std::move (k));
     return *knobs.back();
 }
 
+// ---------------- File menu ----------------
+
+void PreChorusEditor::showFileMenu()
+{
+    enum { mOpen = 1, mSave, mSaveAs, mExport, mReset, mFolder, mOptions, mManual };
+
+    juce::PopupMenu m;
+    m.setLookAndFeel (&lnf);
+    m.addSectionHeader ("PreChorus " + PreChorusProcessor::getVersionString());
+    m.addItem (mOpen, "Open Preset...");
+    m.addItem (mSave, "Save Preset");
+    m.addItem (mSaveAs, "Save Preset As...");
+    m.addSeparator();
+    m.addItem (mExport, "Export Audio to WAV...");
+    m.addSeparator();
+    m.addItem (mReset, "Reset to Defaults");
+    m.addSeparator();
+    m.addItem (mFolder, "Open Preset Folder");
+    m.addItem (mOptions, "Options...");
+    m.addItem (mManual, "Manual / Help");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuButton),
+        [this] (int r)
+        {
+            switch (r)
+            {
+                case mOpen:    doOpenPreset(); break;
+                case mSave:    doSavePreset (false); break;
+                case mSaveAs:  doSavePreset (true); break;
+                case mExport:  doExportWav(); break;
+                case mReset:   proc.resetAllToDefaults();
+                               presetCombo.setSelectedId (0, juce::dontSendNotification);
+                               waveform.rebuild(); break;
+                case mFolder:  PreChorusProcessor::getUserPresetFolder().revealToUser(); break;
+                case mOptions: options.setVisible (true); break;
+                case mManual:  help.setVisible (true); break;
+                default: break;
+            }
+        });
+}
+
+void PreChorusEditor::doOpenPreset()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Open PreChorus Preset",
+                                                   PreChorusProcessor::getUserPresetFolder(),
+                                                   "*" + PreChorusProcessor::getPresetExtension());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (! f.existsAsFile()) return;
+            if (proc.loadPresetFromFile (f))
+            {
+                presetCombo.setSelectedId (0, juce::dontSendNotification);
+                waveform.rebuild();
+            }
+            else
+            {
+                juce::NativeMessageBox::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                    "Open Preset", "That file could not be read as a PreChorus preset.");
+            }
+        });
+}
+
+void PreChorusEditor::doSavePreset (bool forceSaveAs)
+{
+    const auto existing = proc.getCurrentPresetFile();
+    if (! forceSaveAs && existing.getFullPathName().isNotEmpty())
+    {
+        if (proc.savePresetToFile (existing)) return;
+    }
+
+    auto startIn = existing.getFullPathName().isNotEmpty() ? existing
+                                                           : PreChorusProcessor::getUserPresetFolder()
+                                                                 .getChildFile ("My Preset" + PreChorusProcessor::getPresetExtension());
+
+    chooser = std::make_unique<juce::FileChooser> ("Save PreChorus Preset", startIn,
+                                                   "*" + PreChorusProcessor::getPresetExtension());
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            if (! proc.savePresetToFile (f))
+                juce::NativeMessageBox::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                    "Save Preset", "The preset could not be written to that location.");
+        });
+}
+
+void PreChorusEditor::doExportWav()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav"));
+        });
+}
+
+void PreChorusEditor::refreshTooltipMode()
+{
+    const bool wanted = proc.areTooltipsEnabled();
+    if (wanted && tooltips == nullptr)
+        tooltips = std::make_unique<juce::TooltipWindow> (this, PCTheme::Metrics::tooltipMs);
+    else if (! wanted && tooltips != nullptr)
+        tooltips.reset();
+}
+
+// ---------------- Timer ----------------
+
 void PreChorusEditor::timerCallback()
 {
+    refreshTooltipMode();
+
     auto f = proc.getCurrentFile();
     const int sMode = (int) proc.param (IDs::sourceMode);
-    if (sMode == 0) fileLabel.setText ("[Live Input Capture]", juce::dontSendNotification);
+    if (sMode == 0)      fileLabel.setText ("[Live Input Capture]", juce::dontSendNotification);
     else if (sMode == 1) fileLabel.setText (f.existsAsFile() ? f.getFileName() : "[Loaded Sample]", juce::dontSendNotification);
     else if (sMode == 2) fileLabel.setText ("[Hybrid Layer: Live + Loaded]", juce::dontSendNotification);
-    else fileLabel.setText ("[Slice Scatter Ensemble]", juce::dontSendNotification);
+    else                 fileLabel.setText ("[Slice Scatter Ensemble]", juce::dontSendNotification);
 
     const int n = proc.getSampleCount();
-    countLabel.setText (n > 0 ? juce::String (proc.getSampleIndex() + 1) + " / " + juce::String (n) : "", juce::dontSendNotification);
+    countLabel.setText (n > 0 ? juce::String (proc.getSampleIndex() + 1) + " / " + juce::String (n) : "",
+                        juce::dontSendNotification);
 
     const bool sync = proc.param (IDs::sync) > 0.5f;
-    kTail->slider.setEnabled (! sync);
-    kTail->slider.setAlpha (sync ? 0.4f : 1.0f);
-    syncCombo.setEnabled (sync);
-    syncCombo.setAlpha (sync ? 1.0f : 0.5f);
+    kTail->slider->setEnabled (! sync);
+    kTail->slider->setAlpha (sync ? 0.4f : 1.0f);
+    kTail->label.setAlpha (sync ? 0.4f : 1.0f);
+    if (syncCombo != nullptr)
+    {
+        syncCombo->setEnabled (sync);
+        syncCombo->setAlpha (sync ? 1.0f : 0.5f);
+    }
 
     const float conf = proc.getTargetConfidence();
     const int confPct = juce::roundToInt (conf * 100.0f);
-    confidenceLabel.setText ("TARGET CONFIDENCE: " + juce::String (confPct) + "%", juce::dontSendNotification);
-    confidenceLabel.setColour (juce::Label::textColourId, confPct > 90 ? PCColours::neon : (confPct > 70 ? PCColours::hitCol : PCColours::recCol));
+    confidenceLabel.setText ("TARGET CONFIDENCE " + juce::String (confPct) + "%", juce::dontSendNotification);
+    confidenceLabel.setColour (juce::Label::textColourId,
+                               confPct > 90 ? PCTheme::signalOn : (confPct > 70 ? PCTheme::warning : PCTheme::clipRed));
 
     const int currentSlot = proc.getActiveCaptureSlot();
     for (int i = 0; i < 8; ++i)
     {
+        auto& b = *historySlotButtons[(size_t) i];
         const bool isCur = (i == currentSlot);
-        const bool isFilled = proc.isSlotFilled (i);
-        if (isCur) historySlotButtons[(size_t) i].setColour (juce::TextButton::buttonColourId, PCColours::accent);
-        else if (isFilled) historySlotButtons[(size_t) i].setColour (juce::TextButton::buttonColourId, PCColours::neon.withAlpha (0.35f));
-        else historySlotButtons[(size_t) i].setColour (juce::TextButton::buttonColourId, PCColours::panel2);
+        b.setToggleState (isCur || proc.isSlotFilled (i), juce::dontSendNotification);
+        b.setAccentColour (isCur ? PCTheme::accent : PCTheme::accent2);
     }
 
-    lockButton.setColour (juce::TextButton::buttonColourId, proc.isCaptureLocked() ? PCColours::hitCol : PCColours::panel2);
+    lockButton.setToggleState (proc.isCaptureLocked(), juce::dontSendNotification);
+    lockButton.setAccentColour (PCTheme::warning);
 
     const auto state = proc.getCaptureState();
     if (state == PreChorusProcessor::CaptureState::recording)
     {
-        captureButton.setColour (juce::TextButton::buttonColourId, PCColours::recCol);
-        captureButton.setButtonText ("RECORDING...");
+        captureButton.setAccentColour (PCTheme::clipRed);
+        captureButton.setToggleState (true, juce::dontSendNotification);
+        captureButton.setButtonText ("Recording...");
     }
     else if (state == PreChorusProcessor::CaptureState::armed)
     {
-        captureButton.setColour (juce::TextButton::buttonColourId, PCColours::hitCol);
-        captureButton.setButtonText ("ARMED (WAITING)");
+        captureButton.setAccentColour (PCTheme::warning);
+        captureButton.setToggleState (true, juce::dontSendNotification);
+        captureButton.setButtonText ("Armed (waiting)");
     }
     else
     {
-        captureButton.setColour (juce::TextButton::buttonColourId, PCColours::panel2);
-        captureButton.setButtonText ("LIVE CAPTURE");
+        captureButton.setAccentColour (PCTheme::accent);
+        captureButton.setToggleState (false, juce::dontSendNotification);
+        captureButton.setButtonText ("Live Capture");
     }
+    armButton.setToggleState (proc.isCaptureArmed(), juce::dontSendNotification);
+
+    {
+        const int water = proc.getColony().getWaterCount();
+        const juce::String wantedText = water > 0
+            ? "Water " + juce::String (juce::jmin (water, Colony::kWaterToDrown))
+                       + "/" + juce::String (Colony::kWaterToDrown)
+            : juce::String ("Add Water");
+        if (waterButton.getButtonText() != wantedText) waterButton.setButtonText (wantedText);
+        waterButton.setToggleState (water > 0, juce::dontSendNotification);
+        waterButton.setAccentColour (water >= Colony::kWaterToDrown ? PCTheme::clipRed : PCTheme::accent2);
+    }
+
+    {
+        const double sc = proc.getColony().getScore();
+        // Fractional once the colony has been wrecked too fast - that is the point.
+        const bool fractional = std::abs (sc - std::floor (sc)) > 0.001;
+        scoreLabel.setText ("SCORE " + juce::String (sc, fractional ? 2 : 0), juce::dontSendNotification);
+        scoreLabel.setColour (juce::Label::textColourId,
+                              sc < 0.0 ? PCTheme::clipRed
+                                       : (fractional ? PCTheme::warning : PCTheme::accent));
+    }
+
+    colonyStatus.setText (proc.getColony().getStatusLine(), juce::dontSendNotification);
+    colonyStatus.setColour (juce::Label::textColourId,
+                            proc.isDistressCallActive() ? PCTheme::warning : PCTheme::textMuted);
+    gravityReleaseButton.setEnabled (true);
+
+    aButton.setToggleState (proc.getABSlot() == 0, juce::dontSendNotification);
+    bButton.setToggleState (proc.getABSlot() == 1, juce::dontSendNotification);
+
+    // MIDI learn is armed somewhere: flag it on the gear so the user can find Options
+    gearButton.setToggleState (proc.isLearningAnything(), juce::dontSendNotification);
 
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     for (auto* k : { kTone, kBass, kWet, kTail, kShape, kTimeSpread, kTimeConverge, kPitchConverge, kVoiceCount, kFocus })
     {
-        if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col)
+        if (k->slider->findColour (juce::Slider::rotarySliderFillColourId) != col)
         {
-            k->slider.setColour (juce::Slider::rotarySliderFillColourId, col);
-            k->slider.repaint();
+            k->slider->setColour (juce::Slider::rotarySliderFillColourId, col);
+            k->slider->repaint();
         }
     }
 }
 
+// ---------------- Painting ----------------
+
 void PreChorusEditor::paint (juce::Graphics& g)
 {
-    juce::ColourGradient grad (PCColours::bg.brighter (0.05f), 0.0f, 0.0f, PCColours::bg, 0.0f, (float) getHeight(), false);
-    g.setGradientFill (grad);
-    g.fillAll();
+    g.fillAll (PCTheme::bgBase);
 
-    const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
-    g.setColour (col.withAlpha (0.04f));
-    g.fillEllipse (-120.0f, -140.0f, 480.0f, 360.0f);
-    g.setColour (PCColours::hitCol.withAlpha (0.035f));
-    g.fillEllipse ((float) getWidth() - 340.0f, (float) getHeight() - 280.0f, 480.0f, 340.0f);
+    // Header strip
+    g.setColour (PCTheme::panel);
+    g.fillRect (headerStrip);
+    PCTheme::drawSeparator (g, headerStrip.getX(), headerStrip.getRight(), headerStrip.getBottom());
 
+    // Section headers and 1px separators - never boxes inside boxes
     for (auto& gr : groups)
     {
-        auto r = gr.bounds.toFloat();
-        g.setColour (PCColours::panel.withAlpha (0.75f));
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (PCColours::outline);
-        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
-        g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
-        g.setColour (PCColours::textDim);
-        g.drawText (gr.name, gr.bounds.withHeight (16).withTrimmedLeft (10), juce::Justification::centredLeft);
+        PCTheme::drawSectionHeader (g, gr.bounds.withHeight (16), gr.name, PCTheme::accent);
+        if (gr.separatorRight)
+        {
+            g.setColour (PCTheme::edge);
+            g.drawVerticalLine (gr.bounds.getRight() + PCTheme::Metrics::grid,
+                                (float) gr.bounds.getY(), (float) gr.bounds.getBottom());
+        }
     }
+
+    if (! rowSplit.isEmpty())
+        PCTheme::drawSeparator (g, rowSplit.getX(), rowSplit.getRight(), rowSplit.getY());
 }
+
+void PreChorusEditor::paintOverChildren (juce::Graphics& g)
+{
+    // Main window corner radius + the signature identity marks
+    g.setColour (PCTheme::edge);
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), PCTheme::Metrics::radiusWindow, 1.0f);
+    PCTheme::drawSignatureNotch (g, getLocalBounds(), PCTheme::accent);
+    PCTheme::drawVersionStamp (g, getLocalBounds(), "v" + PreChorusProcessor::getVersionString());
+}
+
+// ---------------- Layout ----------------
 
 void PreChorusEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks)
 {
+    // Keep knobs on the 8px grid rather than stretching them to fill the section.
+    const int wanted = 13 + 56 + 14;  // readout + knob + label
+    if (area.getHeight() > wanted) area = area.withSizeKeepingCentre (area.getWidth(), wanted);
+
     const int kw = area.getWidth() / (int) ks.size();
     for (auto* k : ks)
     {
         auto cell = area.removeFromLeft (kw);
-        k->label.setBounds (cell.removeFromTop (12));
-        k->slider.setBounds (cell);
+        k->label.setBounds (cell.removeFromBottom (14));
+        k->slider->setBounds (cell.reduced (2, 0));
     }
 }
 
 void PreChorusEditor::resized()
 {
     help.setBounds (getLocalBounds());
+    options.setBounds (getLocalBounds());
     groups.clear();
-    auto area = getLocalBounds().reduced (12);
 
-    // 1. Header Row
-    auto header = area.removeFromTop (38);
-    auto titleArea = header.removeFromLeft (230);
-    title.setBounds (titleArea.removeFromTop (22));
-    subtitle.setBounds (titleArea);
-    helpButton.setBounds (header.removeFromRight (28).reduced (0, 5));
-    header.removeFromRight (6);
+    const int g8 = PCTheme::Metrics::grid;
+    const int pad = PCTheme::Metrics::windowPad;
+    const int bh = PCTheme::Metrics::buttonHeight;
 
-    sourceModeCombo.setBounds (header.removeFromRight (110).reduced (0, 5));
-    header.removeFromRight (6);
+    auto all = getLocalBounds();
 
-    charCombo.setBounds (header.removeFromRight (116).reduced (0, 5));
-    header.removeFromRight (6);
+    // ---- 1. Header strip (32px) ----
+    headerStrip = all.removeFromTop (PCTheme::Metrics::headerHeight);
+    {
+        auto h = headerStrip.reduced (pad, 2);
 
-    presetCombo.setBounds (header.removeFromRight (128).reduced (0, 5));
-    header.removeFromRight (6);
+        outputLed.setBounds (h.removeFromLeft (12).withSizeKeepingCentre (9, 9));
+        h.removeFromLeft (8);
 
-    auto browser = header.withTrimmedLeft (12);
-    loadButton.setBounds (browser.removeFromRight (64).reduced (0, 5));
-    browser.removeFromRight (4);
-    nextButton.setBounds (browser.removeFromRight (28).reduced (0, 5));
-    browser.removeFromRight (3);
-    prevButton.setBounds (browser.removeFromRight (28).reduced (0, 5));
-    browser.removeFromRight (6);
-    countLabel.setBounds (browser.removeFromRight (48));
-    fileLabel.setBounds (browser.reduced (0, 5));
+        auto left = h.removeFromLeft (150);
+        title.setBounds (left.removeFromTop (16));
+        subtitle.setBounds (left);
 
-    // 2. Capture History & Trigger Strip
-    area.removeFromTop (4);
-    auto capStrip = area.removeFromTop (26);
-    armButton.setBounds (capStrip.removeFromLeft (44));      capStrip.removeFromLeft (4);
-    captureButton.setBounds (capStrip.removeFromLeft (110)); capStrip.removeFromLeft (5);
-    captureCombo.setBounds (capStrip.removeFromLeft (90));   capStrip.removeFromLeft (10);
+        h.removeFromLeft (g8);
+        menuButton.setBounds (h.removeFromLeft (52).withSizeKeepingCentre (52, 22));
+        h.removeFromLeft (4);
+        helpButton.setBounds (h.removeFromLeft (24).withSizeKeepingCentre (24, 22));
+
+        gearButton.setBounds (h.removeFromRight (24).withSizeKeepingCentre (22, 22));
+        h.removeFromRight (g8);
+        presetCombo.setBounds (h.removeFromRight (150).withSizeKeepingCentre (150, 22));
+        h.removeFromRight (g8 * 2);
+        copyABButton.setBounds (h.removeFromRight (48).withSizeKeepingCentre (48, 22));
+        h.removeFromRight (4);
+        bButton.setBounds (h.removeFromRight (26).withSizeKeepingCentre (26, 22));
+        h.removeFromRight (2);
+        aButton.setBounds (h.removeFromRight (26).withSizeKeepingCentre (26, 22));
+        h.removeFromRight (g8 * 2);
+        outputMeter.setBounds (h.removeFromRight (160).withSizeKeepingCentre (160, 12));
+    }
+
+    auto area = all.reduced (pad);
+    area.removeFromTop (g8);
+
+    // ---- 2. Source row ----
+    auto sourceRow = area.removeFromTop (bh);
+    if (sourceModeCombo != nullptr) { sourceModeCombo->setBounds (sourceRow.removeFromLeft (120)); sourceRow.removeFromLeft (g8); }
+    if (charCombo != nullptr)       { charCombo->setBounds (sourceRow.removeFromLeft (132));       sourceRow.removeFromLeft (g8 * 2); }
+
+    loadButton.setBounds (sourceRow.removeFromLeft (64));   sourceRow.removeFromLeft (4);
+    prevButton.setBounds (sourceRow.removeFromLeft (28));   sourceRow.removeFromLeft (2);
+    nextButton.setBounds (sourceRow.removeFromLeft (28));   sourceRow.removeFromLeft (g8);
+    countLabel.setBounds (sourceRow.removeFromRight (64));
+    fileLabel.setBounds (sourceRow);
+
+    area.removeFromTop (g8);
+
+    // ---- 3. Capture row ----
+    auto capRow = area.removeFromTop (bh);
+    armButton.setBounds (capRow.removeFromLeft (48));           capRow.removeFromLeft (4);
+    captureButton.setBounds (capRow.removeFromLeft (124));      capRow.removeFromLeft (4);
+    if (captureCombo != nullptr) { captureCombo->setBounds (capRow.removeFromLeft (100)); capRow.removeFromLeft (g8 * 2); }
 
     for (int i = 0; i < 8; ++i)
     {
-        historySlotButtons[(size_t) i].setBounds (capStrip.removeFromLeft (20));
-        capStrip.removeFromLeft (2);
+        historySlotButtons[(size_t) i]->setBounds (capRow.removeFromLeft (26));
+        capRow.removeFromLeft (2);
     }
-    capStrip.removeFromLeft (4);
-    lockButton.setBounds (capStrip.removeFromLeft (48));
+    capRow.removeFromLeft (g8);
+    lockButton.setBounds (capRow.removeFromLeft (56));
+    confidenceLabel.setBounds (capRow.removeFromRight (190));
 
-    confidenceLabel.setBounds (capStrip.removeFromRight (170));
+    area.removeFromTop (g8);
 
-    // 3. Visualizers Row (32-Voice Constellation + Interactive Waveform)
-    area.removeFromTop (6);
-    auto vis = area.removeFromTop (210);
-    visualizer.setBounds (vis.removeFromLeft (210));
-    vis.removeFromLeft (10);
+    // ---- 4. Visualiser row ----
+    auto vis = area.removeFromTop (220);
+    visualizer.setBounds (vis.removeFromLeft (232));
+    vis.removeFromLeft (g8);
     waveform.setBounds (vis);
 
-    // 4. Transport & Alignment Row
-    area.removeFromTop (6);
-    auto trans = area.removeFromTop (28);
-    playButton.setBounds (trans.removeFromLeft (64));       trans.removeFromLeft (4);
-    exportButton.setBounds (trans.removeFromLeft (84));     trans.removeFromLeft (4);
-    dragPad.setBounds (trans.removeFromLeft (100));         trans.removeFromLeft (4);
-    resetButton.setBounds (trans.removeFromLeft (80));      trans.removeFromLeft (4);
-    randomButton.setBounds (trans.removeFromLeft (64));     trans.removeFromLeft (4);
-    regenSeedButton.setBounds (trans.removeFromLeft (56));  trans.removeFromLeft (10);
+    area.removeFromTop (g8);
 
-    freezeToggle.setBounds (trans.removeFromLeft (70));     trans.removeFromLeft (4);
-    revConvergeToggle.setBounds (trans.removeFromLeft (82));trans.removeFromLeft (8);
+    // ---- 4b. Colony row ----
+    auto colonyRow = area.removeFromTop (bh);
+    gravityAddButton.setBounds (colonyRow.removeFromLeft (104));      colonyRow.removeFromLeft (4);
+    gravityReleaseButton.setBounds (colonyRow.removeFromLeft (124));  colonyRow.removeFromLeft (4);
+    enzymeButton.setBounds (colonyRow.removeFromLeft (104));          colonyRow.removeFromLeft (4);
+    gammaButton.setBounds (colonyRow.removeFromLeft (100));           colonyRow.removeFromLeft (4);
+    waterButton.setBounds (colonyRow.removeFromLeft (100));           colonyRow.removeFromLeft (g8 * 2);
+    scoreLabel.setBounds (colonyRow.removeFromLeft (150));
+    colonyStatus.setBounds (colonyRow);
 
-    syncCombo.setBounds (trans.removeFromRight (84));      trans.removeFromRight (4);
-    syncToggle.setBounds (trans.removeFromRight (56));     trans.removeFromRight (4);
-    alignToggle.setBounds (trans.removeFromRight (122));   trans.removeFromRight (6);
-    seqCombo.setBounds (trans.removeFromRight (96));
+    area.removeFromTop (g8);
 
-    // 5. Knob Panels (Rows A & B)
-    area.removeFromTop (8);
-    const int rowH = (area.getHeight() - 8) / 2;
+    // ---- 5. Transport row ----
+    auto trans = area.removeFromTop (bh);
+    playButton.setBounds (trans.removeFromLeft (64));        trans.removeFromLeft (4);
+    exportButton.setBounds (trans.removeFromLeft (96));      trans.removeFromLeft (4);
+    dragPad.setBounds (trans.removeFromLeft (104));          trans.removeFromLeft (4);
+    resetButton.setBounds (trans.removeFromLeft (64));       trans.removeFromLeft (4);
+    randomButton.setBounds (trans.removeFromLeft (72));      trans.removeFromLeft (4);
+    regenSeedButton.setBounds (trans.removeFromLeft (60));   trans.removeFromLeft (g8 * 2);
+
+    if (freezeToggle != nullptr)      { freezeToggle->setBounds (trans.removeFromLeft (74));      trans.removeFromLeft (4); }
+    if (revConvergeToggle != nullptr) { revConvergeToggle->setBounds (trans.removeFromLeft (86)); }
+
+    if (syncCombo != nullptr)   { syncCombo->setBounds (trans.removeFromRight (88));   trans.removeFromRight (4); }
+    if (syncToggle != nullptr)  { syncToggle->setBounds (trans.removeFromRight (58));  trans.removeFromRight (g8); }
+    if (alignToggle != nullptr) { alignToggle->setBounds (trans.removeFromRight (128)); trans.removeFromRight (g8); }
+    if (seqCombo != nullptr)    { seqCombo->setBounds (trans.removeFromRight (104)); }
+
+    area.removeFromTop (pad);
+
+    // ---- 6. Knob sections ----
+    const int rowH = (area.getHeight() - pad) / 2;
     auto rowA = area.removeFromTop (rowH);
-    area.removeFromTop (8);
+    auto gapRow = area.removeFromTop (pad);
+    rowSplit = { gapRow.getX(), gapRow.getCentreY(), gapRow.getWidth(), 1 };
     auto rowB = area;
 
-    auto group = [&] (juce::Rectangle<int>& src, int width, const juce::String& name)
+    auto group = [&] (juce::Rectangle<int>& src, int width, const juce::String& name, bool last)
     {
         auto r = src.removeFromLeft (width);
-        src.removeFromLeft (6);
-        groups.push_back ({ name, r });
-        return r.reduced (5).withTrimmedTop (13);
+        if (! last) src.removeFromLeft (g8 * 2);
+        groups.push_back ({ name, r, ! last });
+        auto content = r;
+        content.removeFromTop (16 + g8);
+        return content;
     };
 
-    // Row A: SWARM VOICES, CONVERGENCE & MACRO, PHYSICS & DISTANCE
+    // Row A
     const int wA = rowA.getWidth();
-    auto swarmGrp = group (rowA, (int) (wA * 0.35f), "SWARM ENGINE (1-32 VOICES)");
     {
-        auto rightCombo = swarmGrp.removeFromRight (76);
-        dirCombo.setBounds (rightCombo.withSizeKeepingCentre (74, 22));
+        auto swarmGrp = group (rowA, (int) (wA * 0.34f), "Swarm Engine (1-32 Voices)", false);
+        auto rightCombo = swarmGrp.removeFromRight (84);
+        if (dirCombo != nullptr) dirCombo->setBounds (rightCombo.withSizeKeepingCentre (80, 24));
         layoutKnobs (swarmGrp, { kVoiceCount, kVoiceDensity, kVoiceAge, kProgReveal, kHumanize, kGrainSize });
     }
-
-    auto convGrp = group (rowA, (int) (wA * 0.43f), "CONVERGENCE & MACRO");
     {
-        auto rightCombo = convGrp.removeFromRight (80);
-        scaleCombo.setBounds (rightCombo.withSizeKeepingCentre (78, 22));
-        layoutKnobs (convGrp, { kMacro, kTimeSpread, kTimeConverge, kPitchSpread, kDetune, kPitchConverge, kPanSpread, kPanConverge, kToneConverge, kFocus });
+        auto convGrp = group (rowA, (int) (wA * 0.44f), "Convergence & Macro", false);
+        auto rightCombo = convGrp.removeFromRight (88);
+        if (scaleCombo != nullptr) scaleCombo->setBounds (rightCombo.withSizeKeepingCentre (84, 24));
+        layoutKnobs (convGrp, { kMacro, kTimeSpread, kTimeConverge, kPitchSpread, kDetune,
+                                kPitchConverge, kPanSpread, kPanConverge, kToneConverge, kFocus });
     }
+    layoutKnobs (group (rowA, rowA.getWidth(), "Physics & 3D Distance", true),
+                 { kAttraction, kTurbulence, kOvershoot, kOrbit, kDistance });
 
-    layoutKnobs (group (rowA, rowA.getWidth(), "PHYSICS & 3D DISTANCE"), { kAttraction, kTurbulence, kOvershoot, kOrbit, kDistance });
-
-    // Row B: TONE SHAPING & COLOR, MIX & DUCK, PITCH & ENVELOPE
+    // Row B
     const int wB = rowB.getWidth();
-    layoutKnobs (group (rowB, (int) (wB * 0.54f), "TONE SHAPING, ACOUSTICS & COLOR"),
-                 { kTail, kShape, kTone, kBass, kResonance, kTilt, kPresence, kAir, kSpace, kDrive, kTransients, kFormant, kMonoBass });
-
-    auto mixGrp = group (rowB, (int) (wB * 0.26f), "MIX, CAPTURE & DUCK");
+    layoutKnobs (group (rowB, (int) (wB * 0.53f), "Tone Shaping, Acoustics & Colour", false),
+                 { kTail, kShape, kTone, kBass, kResonance, kTilt, kPresence, kAir, kSpace,
+                   kDrive, kTransients, kFormant, kMonoBass });
     {
-        auto rightRelease = mixGrp.removeFromRight (94);
-        postReleaseCombo.setBounds (rightRelease.withSizeKeepingCentre (90, 22));
+        auto mixGrp = group (rowB, (int) (wB * 0.26f), "Mix, Capture & Duck", false);
+        auto rightRelease = mixGrp.removeFromRight (102);
+        if (postReleaseCombo != nullptr) postReleaseCombo->setBounds (rightRelease.withSizeKeepingCentre (98, 24));
         layoutKnobs (mixGrp, { kDry, kWet, kDryReplace, kDucking, kThresh });
     }
-
-    auto pitchArea = group (rowB, rowB.getWidth(), "PITCH & VOLUME");
     {
-        auto right = pitchArea.removeFromRight (60);
-        rangeLabel.setBounds (right.removeFromTop (11));
-        rangeCombo.setBounds (right.removeFromTop (20).reduced (2, 0));
-        right.removeFromTop (2);
-        pitchTension.setBounds (right.withSizeKeepingCentre (50, juce::jmin (50, right.getHeight())));
+        auto pitchArea = group (rowB, rowB.getWidth(), "Pitch & Volume", true);
+        auto right = pitchArea.removeFromRight (64);
+        right = right.withSizeKeepingCentre (64, juce::jmin (84, right.getHeight()));
+        rangeLabel.setBounds (right.removeFromTop (12));
+        if (rangeCombo != nullptr) rangeCombo->setBounds (right.removeFromTop (24).reduced (2, 0));
+        right.removeFromTop (4);
+        pitchTension.setBounds (right.withSizeKeepingCentre (54, juce::jmin (44, right.getHeight())));
         layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension });
     }
 }
+
+// ---------------- Input ----------------
 
 bool PreChorusEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
@@ -1089,15 +1404,12 @@ bool PreChorusEditor::isInterestedInFileDrag (const juce::StringArray& files)
 void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
-        if (proc.loadSampleFile (juce::File (f), true)) return;
+        if (proc.loadSampleFile (juce::File (f), true)) { waveform.rebuild(); return; }
 }
 
 bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
 {
-    if (key == juce::KeyPress::spaceKey)
-    {
-        proc.triggerPreview();
-        return true;
-    }
+    if (key == juce::KeyPress::spaceKey) { proc.triggerPreview(); return true; }
+    if (key == juce::KeyPress::escapeKey && proc.isLearningAnything()) { proc.cancelMidiLearn(); return true; }
     return false;
 }

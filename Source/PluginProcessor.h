@@ -1,5 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
+#include "Colony.h"
+#include "Talkbox.h"
 
 namespace IDs
 {
@@ -155,10 +157,74 @@ public:
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
     void resetEdits();
+    void resetAllToDefaults();
     void randomizePreChorus();
     void regenerateSeed();
     void loadFactoryPreset (int index);
     static juce::StringArray getFactoryPresetNames();
+
+    // User preset files (.pcpreset)
+    bool savePresetToFile (const juce::File& dest);
+    bool loadPresetFromFile (const juce::File& src);
+    juce::File getCurrentPresetFile() const { return currentPresetFile; }
+    static juce::String getPresetExtension() { return ".pcpreset"; }
+    static juce::File getUserPresetFolder();
+
+    // A/B compare
+    void setABSlot (int slot);
+    int  getABSlot() const { return abSlot; }
+    void copyABSlot();
+
+    // MIDI learn / CC mapping. Indices are positions in getParameters().
+    void beginMidiLearn (const juce::String& paramID);
+    void cancelMidiLearn() { midiLearnTarget.store (-1); }
+    bool isLearningMidi (const juce::String& paramID) const;
+    bool isLearningAnything() const { return midiLearnTarget.load() >= 0; }
+    int  getMidiCcForParam (const juce::String& paramID) const;   // -1 if unmapped
+    void clearMidiMappingFor (const juce::String& paramID);
+    void clearAllMidiMappings();
+    juce::Array<std::pair<int, juce::String>> getMidiMappings() const; // { cc, paramID }
+
+    // Colony: the interactive orb ecosystem behind the constellation display.
+    Colony& getColony() { return colony; }
+    const Colony& getColony() const { return colony; }
+    void colonyLeftClick();
+    void colonyRightClick();
+    void colonyMiddleClick();
+    void colonyClickAt (float nx, float ny);
+    void colonyBeginDrag (float nx, float ny);
+    void colonyDragTo (float nx, float ny);
+    void colonyEndDrag();
+    void colonyAddGravity();
+    void colonyReleaseGravity();
+    void colonyAddEnzyme();
+    void colonyAddGamma();
+    void colonyAddWater();
+    void colonyReset();
+    bool isColonyLifeEnabled() const { return colony.isAutonomyEnabled(); }
+    void setColonyLifeEnabled (bool shouldRun);
+
+    // Talkbox distress call: after a long silence the plugin calls out for help.
+    static constexpr double kIdleSecondsBeforeDistress = 600.0;   // 10 minutes
+    void triggerDistressCall();                  // also used by the Options test button
+    bool isDistressCallActive() const { return talkbox.isActive(); }
+    bool isDistressEnabled() const { return distressEnabled.load(); }
+    void setDistressEnabled (bool shouldBeEnabled);
+    double getIdleSeconds() const;
+    /** Seconds of ghost-tracer trails left on the orbs, 0 when none. */
+    float getGhostSeconds() const { return ghostSeconds.load(); }
+    float getGhostAmount() const;
+    /** Current playback rate of the swell: dips below 1 after a distress call. */
+    float getPitchDipAmount() const;
+    void  noteActivity();
+    /** True when the plugin window is closed or minimised - nobody is watching. */
+    bool  isUiHidden() const;
+
+    // Options
+    bool areTooltipsEnabled() const { return tooltipsEnabled.load(); }
+    void setTooltipsEnabled (bool shouldBeEnabled);
+
+    static juce::String getVersionString() { return JucePlugin_VersionString; }
 
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }
@@ -175,9 +241,37 @@ private:
     void render();
     void refreshFolderList (const juce::File& f);
 
-    struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
+    struct Voice
+    {
+        bool active = false;
+        double pos = 0.0;                 // read head into the rendered swell
+        float gain = 1.0f;
+        juce::uint32 id = 0;
+
+        // Granular time-stretch state: two overlapping grains keep the pitch put
+        // while the read head crawls, so the swell drags without dropping an octave.
+        struct Grain { bool active = false; double start = 0.0; double phase = 0.0; };
+        Grain grains[2];
+        double sinceGrain = 0.0;
+        bool headDone = false;      // read head hit the end; let the grains ring out
+    };
     void startVoice (float gain);
-    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet, float duckGain);
+    int  indexOfParam (const juce::String& paramID) const;
+    void handleMidiCc (int ccNumber, int ccValue);
+    void applyPendingMidi();
+    juce::ValueTree buildFullState() const;
+    void applyFullState (const juce::ValueTree& state);
+    void syncVoiceCountToColony();
+    double renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, double startPos, int num,
+                        float dry, float wet, float duckGain, double rate);
+    void renderVoiceGranular (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num,
+                              float dry, float wet, float duckGain, double rate, double stretch);
+    void updateDistress();
+    void armFrenchCry();
+    void speak (TalkboxVoice::Mode mode, float gain, int repeats,
+                float reverb, float delay, float repeatGapSeconds = 0.35f);
+    void firePendingSparkles();
+    void consumeColonyEvents (const Colony::StepResult& ev);
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
@@ -226,6 +320,81 @@ private:
     juce::uint32 voiceCounter = 0;
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
+
+    // MIDI learn: the audio thread only ever touches atomics; the 30Hz timer
+    // applies the queued values on the message thread.
+    static constexpr int kNumCc = 128;
+    std::array<std::atomic<int>,   kNumCc> ccToParamIndex;
+    std::array<std::atomic<float>, kNumCc> ccPendingValue;
+    std::array<std::atomic<bool>,  kNumCc> ccHasPending;
+    std::atomic<int> midiLearnTarget { -1 };
+
+    // A/B compare, user presets, options
+    juce::ValueTree abStates[2];
+    int abSlot = 0;
+    juce::File currentPresetFile;
+    std::atomic<bool> tooltipsEnabled { true };
+    bool hasRandomizedOnce = false;
+
+    Colony colony;
+    int lastKnownVoiceCount = -1;
+    juce::uint32 lastColonyStepMs = 0;
+
+    // Distress call & its after-effects
+    TalkboxVoice talkbox;
+    WhistleBank whistles;
+    std::atomic<bool> distressEnabled { true };
+    std::atomic<juce::uint32> lastActivityMs { 0 };
+    std::atomic<float> ghostSeconds { 0.0f };
+    std::atomic<float> pitchDipSeconds { 0.0f };
+    std::atomic<float> talkboxGain { 0.0f };
+    std::atomic<float> sparkleGain { 0.14f };
+
+    // Water sparkles are scheduled, not queued: one pour can keep glinting for
+    // up to three minutes, so holding a synth voice open for each is no good.
+    struct PendingSparkle { juce::uint32 dueMs; float hz; };
+    static constexpr int kMaxPendingSparkles = 512;
+    static constexpr int kMaxSparkleDelayMs = 180000;    // three minutes
+    std::vector<PendingSparkle> pendingSparkles;
+    juce::uint32 lastDragMs = 0;
+    std::atomic<float> colonyTimeDirection { 1.0f };
+    std::atomic<float> colonyClutchRate { 1.0f };
+    std::atomic<float> colonyStretch { 1.0f };
+    std::atomic<float> colonyWashout { 0.0f };
+
+    // A short delay line, used when the voxbox has to be heard twice over
+    juce::AudioBuffer<float> delayBuffer;
+    int delayWritePos = 0;
+    std::atomic<float> delayAmount { 0.0f };
+
+    // Washed-out water and the babble's tail both live in this one reverb.
+    juce::Reverb outputReverb;
+    std::atomic<float> reverbAmount { 0.0f };
+    float reverbDecayPerTick = 0.0f;
+    std::array<float, 2> washFilterState { 0.0f, 0.0f };
+    std::atomic<int> renderedLength { 0 };
+    double secondsUntilNextCry = 0.0;
+    float shoeClock = 0.0f;
+    // An explosion sometimes leaves a delayed cry hanging over the colony
+    float delayedCrySeconds = 0.0f;
+    // RANDOM lights a long fuse of its own
+    float spanishCrySeconds = 0.0f;
+    // Loading a preset sometimes leaves a French one waiting in the wings
+    float frenchCrySeconds = 0.0f;
+    // Rolled once, when the plugin is first loaded
+    float ranchCrySeconds = 0.0f;
+    // Dropping a sample in occasionally gives it an idea
+    float funnyCrySeconds = 0.0f;
+    // A right-click in the animation occasionally sets off three calls, each
+    // waiting out its own 4-to-9 minute gap before it arrives
+    float tripleCrySeconds = 0.0f;
+    int tripleCriesLeft = 0;
+    int talkboxRepeatsLeft = 0;
+    float talkboxRepeatGap = 0.0f;
+    TalkboxVoice::Mode talkboxRepeatMode = TalkboxVoice::Mode::plea;
+    float talkboxRepeatGain = 1.0f;
+    float playbackRate = 1.0f;
+    juce::Random distressRng;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreChorusProcessor)
 };

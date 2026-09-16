@@ -68,6 +68,25 @@ PreChorusProcessor::PreChorusProcessor()
     captureSlotSRs[0] = loadedSR;
     captureSlotFilled[0] = true;
 
+    for (int i = 0; i < kNumCc; ++i)
+    {
+        ccToParamIndex[(size_t) i].store (-1);
+        ccPendingValue[(size_t) i].store (0.0f);
+        ccHasPending[(size_t) i].store (false);
+    }
+
+    distressRng.setSeed (juce::Random::getSystemRandom().nextInt64());
+    lastActivityMs.store (juce::Time::getMillisecondCounter());
+    secondsUntilNextCry = 0.0;
+
+    // One load in thirty, it has something on its mind twenty-odd minutes from now.
+    if (distressRng.nextInt (30) == 0)
+        ranchCrySeconds = 1200.0f + distressRng.nextFloat() * 600.0f;
+
+    colony.resetAll ((int) param (IDs::voiceCount));
+    lastKnownVoiceCount = (int) param (IDs::voiceCount);
+    lastColonyStepMs = juce::Time::getMillisecondCounter();
+
     startTimerHz (30);
     dirty = true;
 }
@@ -182,6 +201,16 @@ void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     lastPlayheadSample = -1;
     duckEnv = 0.0f;
 
+    talkbox.prepare (sampleRate);
+    whistles.prepare (sampleRate);
+    outputReverb.setSampleRate (sampleRate);
+    delayBuffer.setSize (2, juce::jmax (1024, (int) (sampleRate * 1.2)));
+    delayBuffer.clear();
+    delayWritePos = 0;
+    washFilterState = { 0.0f, 0.0f };
+    playbackRate = 1.0f;
+    noteActivity();
+
     dirty = true;
 }
 
@@ -206,8 +235,37 @@ void PreChorusProcessor::resetEdits()
     setParam (IDs::distance, 0.5f);
 }
 
+void PreChorusProcessor::resetAllToDefaults()
+{
+    // "Back to the default settings" - every automatable parameter, not just the edits.
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            rp->setValueNotifyingHost (rp->getDefaultValue());
+
+    // Keep the non-automatable state in step with the parameters we just reset.
+    colony.resetAll ((int) param (IDs::voiceCount));
+    lastKnownVoiceCount = (int) param (IDs::voiceCount);
+    activeSlot.store (0);
+    captureLockState.store (false);
+    currentPresetFile = juce::File();
+    hasRandomizedOnce = false;
+    dirty = true;
+}
+
 void PreChorusProcessor::randomizePreChorus()
 {
+    // Spec: the first press randomises from wherever you are; every press after that
+    // resets to defaults first, so each click is a genuinely new set of settings.
+    if (hasRandomizedOnce)
+        for (auto* p : getParameters())
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                rp->setValueNotifyingHost (rp->getDefaultValue());
+    hasRandomizedOnce = true;
+
+    // Randomising lights a slow fuse: somewhere between 40 minutes and 4 hours
+    // from now, there is a one-in-three chance it calls out in Spanish.
+    spanishCrySeconds = 2400.0f + juce::Random::getSystemRandom().nextFloat() * (14400.0f - 2400.0f);
+
     auto rnd = [] (float a, float b) { return a + (b - a) * juce::Random::getSystemRandom().nextFloat(); };
     setParam (IDs::voiceCount, (float) juce::Random::getSystemRandom().nextInt (juce::Range<int> (6, 28)));
     setParam (IDs::voiceDensity, rnd (-0.4f, 0.6f));
@@ -227,6 +285,26 @@ void PreChorusProcessor::randomizePreChorus()
     setParam (IDs::drive, rnd (0.1f, 0.5f));
     setParam (IDs::space, rnd (0.2f, 0.6f));
     setParam (IDs::shape, rnd (-0.2f, 0.7f));
+
+    auto& r = juce::Random::getSystemRandom();
+    setParam (IDs::character,     (float) r.nextInt (8));
+    setParam (IDs::voiceDirection,(float) r.nextInt (4));
+    setParam (IDs::scaleLock,     (float) r.nextInt (5));
+    setParam (IDs::postRelease,   (float) r.nextInt (3));
+    setParam (IDs::humanize,      rnd (0.05f, 0.6f));
+    setParam (IDs::grainSize,     rnd (15.0f, 140.0f));
+    setParam (IDs::focus,         rnd (0.2f, 0.95f));
+    setParam (IDs::macro,         rnd (0.55f, 1.0f));
+    setParam (IDs::panSpread,     rnd (0.3f, 1.0f));
+    setParam (IDs::panConverge,   rnd (-0.6f, 1.0f));
+    setParam (IDs::toneConverge,  rnd (0.3f, 1.0f));
+    setParam (IDs::tone,          rnd (2500.0f, 19000.0f));
+    setParam (IDs::basscut,       rnd (40.0f, 320.0f));
+    setParam (IDs::tilt,          rnd (-0.5f, 0.5f));
+    setParam (IDs::presence,      rnd (0.0f, 0.7f));
+    setParam (IDs::transients,    rnd (-0.5f, 0.5f));
+    setParam (IDs::dryReplace,    rnd (0.0f, 0.8f));
+
     regenerateSeed();
 }
 
@@ -244,6 +322,8 @@ juce::StringArray PreChorusProcessor::getFactoryPresetNames()
 
 void PreChorusProcessor::loadFactoryPreset (int index)
 {
+    armFrenchCry();
+
     // Shapes the swarm/tone/convergence character only; leaves source, capture, and per-take
     // envelope trims untouched since those depend on the loaded/captured audio itself.
     switch (index)
@@ -353,6 +433,609 @@ void PreChorusProcessor::loadFactoryPreset (int index)
     regenerateSeed();
 }
 
+// ---------------- Full state, user presets, A/B ----------------
+
+juce::ValueTree PreChorusProcessor::buildFullState() const
+{
+    auto state = const_cast<juce::AudioProcessorValueTreeState&> (apvts).copyState();
+    state.setProperty ("file", currentFile.getFullPathName(), nullptr);
+    state.setProperty ("activeSlot", activeSlot.load(), nullptr);
+    state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    state.setProperty ("tooltips", tooltipsEnabled.load(), nullptr);
+    state.setProperty ("distress", distressEnabled.load(), nullptr);
+    state.setProperty ("colonyLife", colony.isAutonomyEnabled(), nullptr);
+
+    juce::ValueTree midiMap ("MIDIMAP");
+    for (int cc = 0; cc < kNumCc; ++cc)
+    {
+        const int idx = ccToParamIndex[(size_t) cc].load();
+        if (idx < 0) continue;
+        if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (
+                const_cast<PreChorusProcessor*> (this)->getParameters()[idx]))
+        {
+            juce::ValueTree entry ("CC");
+            entry.setProperty ("cc", cc, nullptr);
+            entry.setProperty ("param", p->paramID, nullptr);
+            midiMap.appendChild (entry, nullptr);
+        }
+    }
+    state.appendChild (midiMap, nullptr);
+    state.appendChild (colony.toValueTree(), nullptr);
+    return state;
+}
+
+void PreChorusProcessor::applyFullState (const juce::ValueTree& stateIn)
+{
+    if (! stateIn.isValid()) return;
+    auto state = stateIn.createCopy();
+
+    auto midiMap = state.getChildWithName ("MIDIMAP");
+    if (midiMap.isValid()) state.removeChild (midiMap, nullptr);
+
+    auto colonyTree = state.getChildWithName ("COLONY");
+    if (colonyTree.isValid()) state.removeChild (colonyTree, nullptr);
+
+    apvts.replaceState (state);
+
+    juce::File f (state.getProperty ("file", "").toString());
+    if (f.existsAsFile() && f != currentFile) loadSampleFile (f);
+    activeSlot.store ((int) state.getProperty ("activeSlot", 0));
+    captureLockState.store ((bool) state.getProperty ("captureLock", false));
+    tooltipsEnabled.store ((bool) state.getProperty ("tooltips", true));
+    distressEnabled.store ((bool) state.getProperty ("distress", true));
+    colony.setAutonomyEnabled ((bool) state.getProperty ("colonyLife", true));
+
+    if (colonyTree.isValid()) colony.fromValueTree (colonyTree);
+    else                      colony.syncToVoiceCount ((int) param (IDs::voiceCount));
+    lastKnownVoiceCount = juce::jlimit (1, 32, (int) param (IDs::voiceCount));
+
+    if (midiMap.isValid())
+    {
+        for (int cc = 0; cc < kNumCc; ++cc) ccToParamIndex[(size_t) cc].store (-1);
+        for (int i = 0; i < midiMap.getNumChildren(); ++i)
+        {
+            auto entry = midiMap.getChild (i);
+            const int cc = (int) entry.getProperty ("cc", -1);
+            const int idx = indexOfParam (entry.getProperty ("param", "").toString());
+            if (cc >= 0 && cc < kNumCc && idx >= 0) ccToParamIndex[(size_t) cc].store (idx);
+        }
+    }
+    dirty = true;
+}
+
+juce::File PreChorusProcessor::getUserPresetFolder()
+{
+    auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                   .getChildFile ("PreChorus").getChildFile ("Presets");
+    if (! dir.exists()) dir.createDirectory();
+    return dir;
+}
+
+bool PreChorusProcessor::savePresetToFile (const juce::File& dest)
+{
+    auto target = dest.hasFileExtension (getPresetExtension()) ? dest
+                                                              : dest.withFileExtension (getPresetExtension());
+    auto state = buildFullState();
+    state.setProperty ("presetName", target.getFileNameWithoutExtension(), nullptr);
+    state.setProperty ("pluginVersion", getVersionString(), nullptr);
+
+    if (auto xml = state.createXml())
+    {
+        target.getParentDirectory().createDirectory();
+        if (xml->writeTo (target))
+        {
+            currentPresetFile = target;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PreChorusProcessor::loadPresetFromFile (const juce::File& src)
+{
+    if (! src.existsAsFile()) return false;
+    auto xml = juce::XmlDocument::parse (src);
+    if (xml == nullptr) return false;
+
+    auto state = juce::ValueTree::fromXml (*xml);
+    if (! state.isValid()) return false;
+
+    applyFullState (state);
+    currentPresetFile = src;
+    armFrenchCry();
+    return true;
+}
+
+void PreChorusProcessor::setABSlot (int slot)
+{
+    slot = juce::jlimit (0, 1, slot);
+    if (slot == abSlot) return;
+
+    abStates[abSlot] = buildFullState();
+    abSlot = slot;
+    if (abStates[abSlot].isValid()) applyFullState (abStates[abSlot]);
+    else abStates[abSlot] = buildFullState();
+}
+
+void PreChorusProcessor::copyABSlot()
+{
+    const auto current = buildFullState();
+    abStates[abSlot] = current;
+    abStates[1 - abSlot] = current.createCopy();
+}
+
+// ---------------- MIDI learn ----------------
+
+int PreChorusProcessor::indexOfParam (const juce::String& paramID) const
+{
+    const auto& params = const_cast<PreChorusProcessor*> (this)->getParameters();
+    for (int i = 0; i < params.size(); ++i)
+        if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (params[i]))
+            if (p->paramID == paramID) return i;
+    return -1;
+}
+
+void PreChorusProcessor::beginMidiLearn (const juce::String& paramID)
+{
+    midiLearnTarget.store (indexOfParam (paramID));
+}
+
+bool PreChorusProcessor::isLearningMidi (const juce::String& paramID) const
+{
+    const int t = midiLearnTarget.load();
+    return t >= 0 && t == indexOfParam (paramID);
+}
+
+int PreChorusProcessor::getMidiCcForParam (const juce::String& paramID) const
+{
+    const int idx = indexOfParam (paramID);
+    if (idx < 0) return -1;
+    for (int cc = 0; cc < kNumCc; ++cc)
+        if (ccToParamIndex[(size_t) cc].load() == idx) return cc;
+    return -1;
+}
+
+void PreChorusProcessor::clearMidiMappingFor (const juce::String& paramID)
+{
+    const int idx = indexOfParam (paramID);
+    if (idx < 0) return;
+    for (int cc = 0; cc < kNumCc; ++cc)
+        if (ccToParamIndex[(size_t) cc].load() == idx) ccToParamIndex[(size_t) cc].store (-1);
+}
+
+void PreChorusProcessor::clearAllMidiMappings()
+{
+    for (int cc = 0; cc < kNumCc; ++cc) ccToParamIndex[(size_t) cc].store (-1);
+    midiLearnTarget.store (-1);
+}
+
+juce::Array<std::pair<int, juce::String>> PreChorusProcessor::getMidiMappings() const
+{
+    juce::Array<std::pair<int, juce::String>> out;
+    auto& params = const_cast<PreChorusProcessor*> (this)->getParameters();
+    for (int cc = 0; cc < kNumCc; ++cc)
+    {
+        const int idx = ccToParamIndex[(size_t) cc].load();
+        if (idx < 0 || idx >= params.size()) continue;
+        if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*> (params[idx]))
+            out.add ({ cc, p->paramID });
+    }
+    return out;
+}
+
+void PreChorusProcessor::handleMidiCc (int ccNumber, int ccValue)
+{
+    if (ccNumber < 0 || ccNumber >= kNumCc) return;
+
+    const int learning = midiLearnTarget.load();
+    if (learning >= 0)
+    {
+        // A controller may already be bound elsewhere - one CC drives one parameter.
+        for (int cc = 0; cc < kNumCc; ++cc)
+            if (ccToParamIndex[(size_t) cc].load() == learning) ccToParamIndex[(size_t) cc].store (-1);
+
+        ccToParamIndex[(size_t) ccNumber].store (learning);
+        midiLearnTarget.store (-1);
+        return;
+    }
+
+    if (ccToParamIndex[(size_t) ccNumber].load() < 0) return;
+    ccPendingValue[(size_t) ccNumber].store (juce::jlimit (0.0f, 1.0f, (float) ccValue / 127.0f));
+    ccHasPending[(size_t) ccNumber].store (true);
+}
+
+void PreChorusProcessor::applyPendingMidi()
+{
+    auto& params = getParameters();
+    for (int cc = 0; cc < kNumCc; ++cc)
+    {
+        if (! ccHasPending[(size_t) cc].exchange (false)) continue;
+        const int idx = ccToParamIndex[(size_t) cc].load();
+        if (idx < 0 || idx >= params.size()) continue;
+        if (auto* p = params[idx])
+            p->setValueNotifyingHost (ccPendingValue[(size_t) cc].load());
+    }
+}
+
+void PreChorusProcessor::setTooltipsEnabled (bool shouldBeEnabled)
+{
+    tooltipsEnabled.store (shouldBeEnabled);
+}
+
+// ---------------- Distress call ----------------
+
+void PreChorusProcessor::noteActivity()
+{
+    lastActivityMs.store (juce::Time::getMillisecondCounter());
+}
+
+double PreChorusProcessor::getIdleSeconds() const
+{
+    const juce::uint32 now = juce::Time::getMillisecondCounter();
+    return (double) (now - lastActivityMs.load()) * 0.001;
+}
+
+void PreChorusProcessor::setDistressEnabled (bool shouldBeEnabled)
+{
+    distressEnabled.store (shouldBeEnabled);
+    if (! shouldBeEnabled) talkbox.stop();
+}
+
+void PreChorusProcessor::armFrenchCry()
+{
+    // One preset load in forty leaves a French plea waiting, minutes out.
+    if (distressRng.nextInt (40) != 0) return;
+    frenchCrySeconds = 120.0f + distressRng.nextFloat() * (600.0f - 120.0f);
+}
+
+bool PreChorusProcessor::isUiHidden() const
+{
+    auto* ed = const_cast<PreChorusProcessor*> (this)->getActiveEditor();
+    if (ed == nullptr) return true;                 // no window open at all
+    if (! ed->isShowing()) return true;
+
+    if (auto* peer = ed->getPeer())
+        return peer->isMinimised();
+
+    return false;
+}
+
+void PreChorusProcessor::speak (TalkboxVoice::Mode mode, float gain, int repeats,
+                                float reverb, float delay, float repeatGapSeconds)
+{
+    talkbox.stop();
+    talkbox.planUtterance (mode);
+    talkboxGain.store (gain);
+
+    if (reverb > 0.0f)
+    {
+        reverbAmount.store (juce::jmax (reverbAmount.load(), reverb));
+        reverbDecayPerTick = reverb / (10.0f * 30.0f);
+    }
+    if (delay > 0.0f) delayAmount.store (juce::jmax (delayAmount.load(), delay));
+
+    talkboxRepeatsLeft = juce::jmax (0, repeats - 1);
+    talkboxRepeatMode = mode;
+    talkboxRepeatGain = gain;
+    talkboxRepeatGap = repeatGapSeconds;
+}
+
+void PreChorusProcessor::triggerDistressCall()
+{
+    if (talkbox.isActive()) return;
+
+    talkbox.planUtterance();                       // a different voice every time
+    talkboxGain.store (0.24f + distressRng.nextFloat() * 0.16f);
+    reverbAmount.store (juce::jmax (reverbAmount.load(), 0.4f));
+    reverbDecayPerTick = 0.4f / (8.0f * 30.0f);
+
+    // The colony answers: trails smear off the orbs and the swell sags in pitch.
+    ghostSeconds.store (3.5f + distressRng.nextFloat() * 2.5f);
+    pitchDipSeconds.store (2.2f + distressRng.nextFloat() * 1.8f);
+}
+
+float PreChorusProcessor::getGhostAmount() const
+{
+    return juce::jlimit (0.0f, 1.0f, ghostSeconds.load() / 2.0f);
+}
+
+float PreChorusProcessor::getPitchDipAmount() const
+{
+    return juce::jlimit (0.0f, 1.0f, (1.0f - playbackRate) / 0.24f);
+}
+
+void PreChorusProcessor::updateDistress()
+{
+    const float dt = 1.0f / 30.0f;
+
+    if (ghostSeconds.load() > 0.0f)
+        ghostSeconds.store (juce::jmax (0.0f, ghostSeconds.load() - dt));
+    if (pitchDipSeconds.load() > 0.0f)
+        pitchDipSeconds.store (juce::jmax (0.0f, pitchDipSeconds.load() - dt));
+
+    // The three a right-click set off, spaced out one gap at a time.
+    if (tripleCriesLeft > 0 && tripleCrySeconds > 0.0f)
+    {
+        tripleCrySeconds -= dt;
+        if (tripleCrySeconds <= 0.0f && ! talkbox.isActive())
+        {
+            --tripleCriesLeft;
+            speak (TalkboxVoice::Mode::plea, 1.0f, 1, 0.5f, 0.35f);
+            ghostSeconds.store (juce::jmax (ghostSeconds.load(), 5.0f));
+
+            tripleCrySeconds = tripleCriesLeft > 0
+                                   ? 240.0f + distressRng.nextFloat() * (540.0f - 240.0f)
+                                   : 0.0f;
+        }
+    }
+
+    // The one the last dropped sample put in its head.
+    if (funnyCrySeconds > 0.0f)
+    {
+        funnyCrySeconds -= dt;
+        if (funnyCrySeconds <= 0.0f)
+        {
+            funnyCrySeconds = 0.0f;
+            if (! talkbox.isActive())
+                speak (TalkboxVoice::Mode::somethingFunny, 1.0f, 1, 0.4f, 0.0f);
+        }
+    }
+
+    // The one it has been sitting on since the plugin was loaded.
+    if (ranchCrySeconds > 0.0f)
+    {
+        ranchCrySeconds -= dt;
+        if (ranchCrySeconds <= 0.0f)
+        {
+            ranchCrySeconds = 0.0f;
+            if (! talkbox.isActive())
+            {
+                speak (TalkboxVoice::Mode::ranchAndMayo, 1.0f, 1, 0.45f, 0.0f);
+                ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+            }
+        }
+    }
+
+    // The one a preset load left waiting.
+    if (frenchCrySeconds > 0.0f)
+    {
+        frenchCrySeconds -= dt;
+        if (frenchCrySeconds <= 0.0f)
+        {
+            frenchCrySeconds = 0.0f;
+            if (! talkbox.isActive())
+            {
+                speak (TalkboxVoice::Mode::frenchPlea, 1.0f, 1, 0.5f, 0.0f);
+                ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+            }
+        }
+    }
+
+    // The fuse the RANDOM button lit, hours ago.
+    if (spanishCrySeconds > 0.0f)
+    {
+        spanishCrySeconds -= dt;
+        if (spanishCrySeconds <= 0.0f)
+        {
+            spanishCrySeconds = 0.0f;
+            if (distressRng.nextInt (3) == 0 && ! talkbox.isActive())
+            {
+                speak (TalkboxVoice::Mode::spanishPlea, 1.0f, 1, 0.5f, 0.0f);
+                ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+            }
+        }
+    }
+
+    // The cry an explosion left behind, arriving anywhere from 4 to 30 minutes later.
+    if (delayedCrySeconds > 0.0f)
+    {
+        delayedCrySeconds -= dt;
+        if (delayedCrySeconds <= 0.0f)
+        {
+            delayedCrySeconds = 0.0f;
+            if (! talkbox.isActive())
+            {
+                speak (TalkboxVoice::Mode::plea, 1.0f, 1, 0.5f, 0.0f);
+                ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+                pitchDipSeconds.store (juce::jmax (pitchDipSeconds.load(), 2.5f));
+            }
+        }
+    }
+
+    // Say it a second time once the first has finished.
+    if (talkboxRepeatsLeft > 0 && ! talkbox.isActive())
+    {
+        talkboxRepeatGap -= dt;
+        if (talkboxRepeatGap <= 0.0f)
+        {
+            --talkboxRepeatsLeft;
+            talkbox.planUtterance (talkboxRepeatMode);
+            talkboxGain.store (talkboxRepeatGain);
+            talkboxRepeatGap = 0.35f;
+        }
+    }
+
+    if (! distressEnabled.load()) return;
+
+    // Nobody watching? Every eight minutes, a one-in-a-hundred chance it pipes up.
+    shoeClock += dt;
+    if (shoeClock >= 480.0f)
+    {
+        shoeClock = 0.0f;
+        if (isUiHidden() && distressRng.nextInt (100) == 0 && ! talkbox.isActive())
+        {
+            const bool shoes = distressRng.nextBool();
+            speak (shoes ? TalkboxVoice::Mode::tieMyShoes : TalkboxVoice::Mode::randomOutburst,
+                   1.0f, 2, 0.6f, 0.8f, 0.5f);
+            ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+        }
+    }
+
+    if (getIdleSeconds() < kIdleSecondsBeforeDistress)
+    {
+        secondsUntilNextCry = 0.0;
+        return;
+    }
+
+    // Left alone long enough. Call out, then wait a random while and call again.
+    if (talkbox.isActive()) return;
+
+    secondsUntilNextCry -= dt;
+    if (secondsUntilNextCry <= 0.0)
+    {
+        triggerDistressCall();
+        secondsUntilNextCry = 20.0 + distressRng.nextFloat() * 100.0;
+    }
+}
+
+// ---------------- Colony ----------------
+
+void PreChorusProcessor::syncVoiceCountToColony()
+{
+    const int live = juce::jlimit (1, 32, colony.getLiveOrbCount());
+    lastKnownVoiceCount = live;
+    setParam (IDs::voiceCount, (float) live);
+}
+
+void PreChorusProcessor::colonyLeftClick()
+{
+    noteActivity();
+    if (colony.registerLeftClick()) { syncVoiceCountToColony(); dirty = true; }
+}
+
+void PreChorusProcessor::colonyRightClick()
+{
+    noteActivity();
+
+    // One right-click in a hundred, it calls out three times over at full volume,
+    // each one arriving four to nine minutes after the last.
+    if (tripleCriesLeft <= 0 && distressRng.nextInt (100) == 0)
+    {
+        tripleCriesLeft = 3;
+        tripleCrySeconds = 240.0f + distressRng.nextFloat() * (540.0f - 240.0f);
+    }
+
+    if (colony.registerRightClick()) { syncVoiceCountToColony(); dirty = true; }
+}
+
+void PreChorusProcessor::consumeColonyEvents (const Colony::StepResult& ev)
+{
+    for (int i = 0; i < ev.numTones; ++i)
+        whistles.trigger (ev.tones[(size_t) i].hz, ev.tones[(size_t) i].flavour,
+                          0.0f, ev.tones[(size_t) i].hue);
+
+    if (ev.audioChanged)         // hatched, died, destroyed: the element count moved
+    {
+        syncVoiceCountToColony();
+        dirty = true;
+    }
+}
+
+void PreChorusProcessor::colonyClickAt (float nx, float ny)
+{
+    noteActivity();
+    if (colony.clickAt (nx, ny)) dirty = true;
+}
+
+void PreChorusProcessor::colonyBeginDrag (float nx, float ny)
+{
+    noteActivity();
+    lastDragMs = juce::Time::getMillisecondCounter();
+    colony.beginDrag (nx, ny);
+}
+
+void PreChorusProcessor::colonyDragTo (float nx, float ny)
+{
+    noteActivity();
+    const juce::uint32 now = juce::Time::getMillisecondCounter();
+    const float dt = juce::jlimit (0.001f, 0.2f, (float) (now - lastDragMs) * 0.001f);
+    lastDragMs = now;
+
+    consumeColonyEvents (colony.dragTo (nx, ny, dt));
+}
+
+void PreChorusProcessor::colonyEndDrag()
+{
+    colony.endDrag();
+}
+
+void PreChorusProcessor::colonyMiddleClick()
+{
+    noteActivity();
+    if (colony.registerMiddleClick()) { syncVoiceCountToColony(); dirty = true; }
+}
+
+void PreChorusProcessor::colonyAddGravity()     { noteActivity(); colony.addGravity();     dirty = true; }
+void PreChorusProcessor::colonyReleaseGravity() { noteActivity(); colony.releaseGravity(); dirty = true; }
+void PreChorusProcessor::colonyAddEnzyme()      { noteActivity(); colony.addEnzyme();      dirty = true; }
+void PreChorusProcessor::colonyAddGamma()       { noteActivity(); colony.addGamma();       dirty = true; }
+void PreChorusProcessor::colonyAddWater()
+{
+    noteActivity();
+    colony.addWater();
+
+    // Sparkles: the count, the pitches and the timing are all rolled fresh, so
+    // no two pours sound alike. They are scheduled rather than played at once -
+    // a single pour keeps glinting anywhere from a millisecond to three minutes
+    // later. Later pours sparkle thinner as the mix drowns.
+    const float remaining = 1.0f - colony.getWaterDilution();
+    const int count = 4 + distressRng.nextInt (19);                 // random density, 4..22
+    const juce::uint32 now = juce::Time::getMillisecondCounter();
+
+    for (int i = 0; i < count && pendingSparkles.size() < kMaxPendingSparkles; ++i)
+    {
+        const float hz = 1300.0f * std::pow (2.0f, distressRng.nextFloat() * 2.8f);   // random pitch
+        const juce::uint32 delayMs = (juce::uint32) (1 + distressRng.nextInt (kMaxSparkleDelayMs));
+        pendingSparkles.push_back ({ now + delayMs, hz });
+    }
+
+    sparkleGain.store (0.05f + 0.10f * remaining);
+    dirty = true;
+}
+
+void PreChorusProcessor::firePendingSparkles()
+{
+    if (pendingSparkles.empty()) return;
+
+    const juce::uint32 now = juce::Time::getMillisecondCounter();
+    for (auto it = pendingSparkles.begin(); it != pendingSparkles.end(); )
+    {
+        if ((juce::int32) (now - it->dueMs) >= 0)
+        {
+            // One sparkle in a hundred does not ping - it falls away instead,
+            // from a random pitch at a random rate, for one to three seconds.
+            const bool falls = distressRng.nextInt (100) == 0;
+            whistles.trigger (falls ? it->hz * (0.25f + distressRng.nextFloat() * 1.6f) : it->hz,
+                              falls ? WhistleBank::falling : WhistleBank::sparkle);
+            it = pendingSparkles.erase (it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void PreChorusProcessor::setColonyLifeEnabled (bool shouldRun)
+{
+    colony.setAutonomyEnabled (shouldRun);
+    if (! shouldRun)
+    {
+        // Cancel anything already queued up, so switching it off is immediate.
+        delayedCrySeconds = spanishCrySeconds = frenchCrySeconds = 0.0f;
+        ranchCrySeconds = funnyCrySeconds = tripleCrySeconds = 0.0f;
+        tripleCriesLeft = 0;
+        pendingSparkles.clear();
+    }
+}
+
+void PreChorusProcessor::colonyReset()
+{
+    colony.resetAll ((int) param (IDs::voiceCount));
+    lastKnownVoiceCount = (int) param (IDs::voiceCount);
+    dirty = true;
+}
+
 void PreChorusProcessor::selectCaptureSlot (int slotIdx)
 {
     if (slotIdx >= 0 && slotIdx < kNumHistorySlots)
@@ -384,6 +1067,76 @@ std::shared_ptr<const RenderedSample> PreChorusProcessor::getRendered() const
 
 void PreChorusProcessor::timerCallback()
 {
+    applyPendingMidi();
+    updateDistress();
+    firePendingSparkles();
+
+    // --- Colony simulation ---------------------------------------------------
+    {
+        const juce::uint32 now = juce::Time::getMillisecondCounter();
+        const float dt = juce::jlimit (0.0f, 0.1f, (float) (now - lastColonyStepMs) * 0.001f);
+        lastColonyStepMs = now;
+
+        const int vc = juce::jlimit (1, 32, (int) param (IDs::voiceCount));
+        if (vc != lastKnownVoiceCount)
+        {
+            colony.syncToVoiceCount (vc);
+            lastKnownVoiceCount = vc;
+        }
+
+        colony.setGhosting (ghostSeconds.load() > 0.0f);
+        const auto colonyEvents = colony.step (dt);
+        consumeColonyEvents (colonyEvents);
+
+        // One explosion in ten leaves something crying for help, minutes later.
+        if ((colonyEvents.detonated || colonyEvents.asteroidHit)
+            && delayedCrySeconds <= 0.0f
+            && distressRng.nextInt (10) == 0)
+        {
+            delayedCrySeconds = 240.0f + distressRng.nextFloat() * (1800.0f - 240.0f);
+        }
+
+        if (colonyEvents.yellowFusesFired > 0)
+        {
+            // Urgent, full volume, and echoing off itself.
+            speak (TalkboxVoice::Mode::randomOutburst, 1.0f, 1, 0.35f, 0.75f);
+        }
+        else if (colonyEvents.blueOrbsLost > 0)
+        {
+            // A blue one has gone. The voxbox has something to say about it -
+            // usually asking if you are enjoying this, and that it is hungry.
+            speak (distressRng.nextInt (3) == 0 ? TalkboxVoice::Mode::randomOutburst
+                                                : TalkboxVoice::Mode::havingFun,
+                   0.95f, 1, 0.45f, 0.0f);
+        }
+        else if (colonyEvents.pleaForFoodAndShelter)
+        {
+            // Full volume, and the same words in a voice you have not heard before.
+            speak (TalkboxVoice::Mode::foodAndShelter, 0.95f, 1, 0.5f, 0.0f);
+            ghostSeconds.store (juce::jmax (ghostSeconds.load(), 4.0f));
+        }
+        else if (colonyEvents.babbleStarted)
+        {
+            // Urgent, loud, and it rings for a long time afterwards.
+            speak (TalkboxVoice::Mode::urgentBabble, 0.95f, 1, 0.92f, 0.0f);
+            reverbDecayPerTick = 0.92f / (Colony::kBabbleSeconds * 30.0f * 1.6f);
+            ghostSeconds.store (Colony::kBabbleSeconds);
+        }
+        colonyTimeDirection.store (colony.getTimeDirection());
+        colonyClutchRate.store (colony.getClutchRate());
+        colonyStretch.store (colony.getTimeStretch());
+        colonyWashout.store (colony.getWashout());
+
+        // Water that has been poured on too fast leaves a permanent wash; the
+        // babble adds a tail of its own that rings out and fades.
+        if (delayAmount.load() > 0.0f)
+            delayAmount.store (juce::jmax (0.0f, delayAmount.load() - 1.0f / (30.0f * 12.0f)));
+
+        const float washTail = colony.getWashout() * 0.55f;
+        float wanted = juce::jmax (washTail, reverbAmount.load() - reverbDecayPerTick);
+        reverbAmount.store (juce::jlimit (0.0f, 0.95f, wanted));
+    }
+
     if (param (IDs::sync) > 0.5f)
     {
         const double bpm = hostBpm.load();
@@ -589,6 +1342,18 @@ void PreChorusProcessor::render()
 
     juce::Random rnd ((juce::int64) param (IDs::seed));
 
+    // Colony: destroyed orbs take their voice with them, and the oscillator bank
+    // rate-scales every piece of movement in the swarm.
+    int liveVoices = 0;
+    for (int v = 0; v < numVoices; ++v)
+        if (! colony.isVoiceDead (v)) ++liveVoices;
+    liveVoices = juce::jmax (1, liveVoices);
+
+    const float clutchPace = colony.getClutchRate();
+    const float colonyOrbitRate = colony.orbitRateScale() * clutchPace;
+    const float colonyLfo1Rate  = colony.lfo1RateScale() * clutchPace;
+    const float colonyLfo2Rate  = colony.lfo2RateScale() * clutchPace;
+
     int postReleaseExtraSamples = 0;
     if (postReleaseMode == 1 || postReleaseMode == 2)
         postReleaseExtraSamples = (int) (sr * 1.5);
@@ -607,6 +1372,8 @@ void PreChorusProcessor::render()
     // Render Voices
     for (int v = 0; v < numVoices; ++v)
     {
+        if (colony.isVoiceDead (v)) continue;   // this element was lost in a detonation
+
         const float vNorm = (numVoices > 1) ? (float) v / (float) (numVoices - 1) : 0.5f;
 
         const float hTime = (rnd.nextFloat() * 2.0f - 1.0f) * humanizeAmt * 0.015f;
@@ -675,20 +1442,26 @@ void PreChorusProcessor::render()
                 curPitchSemi += turb;
             }
 
+            const float tSec = (float) i / (float) sr;
+
             // String Ensemble dual-LFO chorusing (Solina emulation)
             if (charMode == 5)
             {
-                const float lfo1 = std::sin ((float) i / sr * juce::MathConstants<float>::twoPi * 0.6f + (float) v * 1.2f);
-                const float lfo2 = std::sin ((float) i / sr * juce::MathConstants<float>::twoPi * 6.0f + (float) v * 1.8f);
+                const float lfo1 = std::sin (tSec * juce::MathConstants<float>::twoPi * 0.6f * colonyLfo1Rate + (float) v * 1.2f);
+                const float lfo2 = std::sin (tSec * juce::MathConstants<float>::twoPi * 6.0f * colonyLfo2Rate + (float) v * 1.8f);
                 curPitchSemi += (lfo1 * 0.18f + lfo2 * 0.08f);
             }
             // Tape Choir flutter & wow
             else if (charMode == 3)
             {
-                const float wow = std::sin ((float) i / sr * juce::MathConstants<float>::twoPi * 1.5f + (float) v) * 0.12f;
-                const float flutter = std::sin ((float) i / sr * juce::MathConstants<float>::twoPi * 14.0f) * 0.06f;
+                const float wow = std::sin (tSec * juce::MathConstants<float>::twoPi * 1.5f * colonyLfo1Rate + (float) v) * 0.12f;
+                const float flutter = std::sin (tSec * juce::MathConstants<float>::twoPi * 14.0f * colonyLfo2Rate) * 0.06f;
                 curPitchSemi += (wow + flutter);
             }
+
+            // Colony: enzyme oscillations and gamma pitch displacement
+            curPitchSemi += colony.oscillatorPitchMod (v, tSec);
+            curPitchSemi += colony.gammaPitchOffset (v, tSec);
 
             if (i >= swellLen && postReleaseMode == 2)
             {
@@ -705,7 +1478,8 @@ void PreChorusProcessor::render()
 
             if (orbitAmt > 0.01f)
             {
-                const float orbitAngle = effectiveProgress * juce::MathConstants<float>::twoPi * 2.0f + vNorm * juce::MathConstants<float>::twoPi;
+                const float orbitAngle = effectiveProgress * juce::MathConstants<float>::twoPi * 2.0f * colonyOrbitRate
+                                       + vNorm * juce::MathConstants<float>::twoPi;
                 curPan = juce::jlimit (-1.0f, 1.0f, curPan + std::sin (orbitAngle) * orbitAmt * 0.7f);
             }
 
@@ -817,7 +1591,7 @@ void PreChorusProcessor::render()
                 swellGain = std::cos (postFrac * juce::MathConstants<float>::halfPi);
             }
 
-            const float voiceAmp = 1.0f / std::sqrt ((float) numVoices);
+            const float voiceAmp = 1.0f / std::sqrt ((float) liveVoices);
             swarmBuffer.addSample (0, i, sampL * swellGain * panL * voiceAmp * distFactor);
             swarmBuffer.addSample (1, i, sampR * swellGain * panR * voiceAmp * distFactor);
 
@@ -827,6 +1601,31 @@ void PreChorusProcessor::render()
 
     const float swarmMag = swarmBuffer.getMagnitude (0, totalSwarmLen);
     if (swarmMag > 0.001f) swarmBuffer.applyGain (0.90f / swarmMag);
+
+    // 3b. Water: every pour thins the swell a little more. Twenty of them and
+    // there is almost nothing left - body drains out first, then the level.
+    const float dilution = colony.getWaterDilution();
+    if (dilution > 0.001f)
+    {
+        // Progressive high-pass: the low end washes away as the water rises.
+        const float hpHz = 60.0f + dilution * dilution * 1500.0f;
+        const float hpCoeff = juce::jlimit (0.0f, 0.999f,
+                                  1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi * hpHz / (float) sr));
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float* ptr = swarmBuffer.getWritePointer (ch);
+            float lp = 0.0f;
+            for (int i = 0; i < totalSwarmLen; ++i)
+            {
+                lp += hpCoeff * (ptr[i] - lp);
+                ptr[i] -= lp;                      // one-pole high-pass
+            }
+        }
+
+        // ...and the level drains away with it, down to barely there.
+        const float waterGain = 0.02f + 0.98f * std::pow (1.0f - dilution, 1.6f);
+        swarmBuffer.applyGain (waterGain);
+    }
 
     // 4. Drive & Saturation
     const float driveAmt = param (IDs::drive);
@@ -1062,6 +1861,7 @@ void PreChorusProcessor::render()
     {
         juce::SpinLock::ScopedLockType l (renderLock);
         rendered = out;
+        renderedLength.store (out->audio.getNumSamples());
     }
     setLatencySamples (param (IDs::align) > 0.5f ? latency : 0);
 }
@@ -1110,6 +1910,9 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     // Live Input Meter & Sidechain Ducking Follower
     const float inPeak = buffer.getMagnitude (0, numSamples);
     inputMeter.store (inPeak);
+
+    // Anything arriving at the input counts as someone being here.
+    if (inPeak > 0.0015f) noteActivity();
 
     const float duckAmt = param (IDs::ducking);
     if (duckAmt > 0.01f)
@@ -1185,7 +1988,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         for (auto& v : voices) v.active = false;
         playhead.store (-1);
     }
-    if (triggerRequest.exchange (0)) startVoice (1.0f);
+    if (triggerRequest.exchange (0)) { startVoice (1.0f); noteActivity(); }
 
     const int seqMode = (int) param (IDs::sequence);
     for (const auto meta : midi)
@@ -1212,29 +2015,124 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
                 }
             }
             if (allowTrigger) startVoice (m.getFloatVelocity());
+            noteActivity();
         }
+        else if (m.isController()) handleMidiCc (m.getControllerNumber(), m.getControllerValue());
         else if (m.isAllNotesOff()) for (auto& v : voices) v.active = false;
     }
 
+    // The distress call drags the swell down in pitch, then lets it back up.
+    const float dipTarget = pitchDipSeconds.load() > 0.0f ? 0.78f : 1.0f;
+    playbackRate += (dipTarget - playbackRate) * 0.06f;
+    if (std::abs (playbackRate - dipTarget) < 0.0005f) playbackRate = dipTarget;
+
+    // ...and the colony decides which way time is running.
+    const double flow = (double) playbackRate
+                      * (double) colonyTimeDirection.load()
+                      * (double) juce::jlimit (0.05f, 100.0f, colonyClutchRate.load());
+
     auto r = getRendered();
-    if (r == nullptr || r->audio.getNumSamples() == 0) return;
 
     const float dryLvl = dryParam != nullptr ? dryParam->load() : 1.0f;
     const float wetLvl = wetParam != nullptr ? wetParam->load() : 1.0f;
 
-    if (dryLvl > 0.0f && buffer.getNumChannels() > 0) buffer.applyGain (dryLvl);
-    else buffer.clear();
-
-    int activePos = -1;
-    for (auto& v : voices)
+    if (r != nullptr && r->audio.getNumSamples() > 0)
     {
-        if (! v.active) continue;
-        renderRange (buffer, *r, v.pos, numSamples, dryLvl, wetLvl * v.gain, duckGain);
-        v.pos += numSamples;
-        activePos = v.pos;
-        if (v.pos >= r->audio.getNumSamples()) v.active = false;
+        if (dryLvl > 0.0f && buffer.getNumChannels() > 0) buffer.applyGain (dryLvl);
+        else buffer.clear();
+
+        const double stretch = juce::jlimit (0.2f, 5.0f, colonyStretch.load());
+        const bool granulating = std::abs (stretch - 1.0) > 0.02;
+
+        int activePos = -1;
+        for (auto& v : voices)
+        {
+            if (! v.active) continue;
+
+            if (granulating)
+            {
+                renderVoiceGranular (buffer, *r, v, numSamples, dryLvl, wetLvl * v.gain,
+                                     duckGain, flow, stretch);
+            }
+            else
+            {
+                v.pos = renderRange (buffer, *r, v.pos, numSamples, dryLvl, wetLvl * v.gain,
+                                     duckGain, flow);
+                if (v.pos >= (double) r->audio.getNumSamples() || v.pos < 0.0) v.active = false;
+                for (auto& gr : v.grains) gr.active = false;
+                v.sinceGrain = 0.0;
+                v.headDone = false;
+            }
+
+            if (v.active) activePos = (int) v.pos;
+        }
+        playhead.store (activePos);
     }
-    playhead.store (activePos);
+
+    // The colony's own voices: hatchling whistles, death oscillations, and the
+    // talkbox calling out when it has been left alone too long.
+    whistles.render (buffer, numSamples, juce::jmax (0.08f, sparkleGain.load()));
+    talkbox.render (buffer, numSamples, talkboxGain.load());
+
+    // Watered down: the top comes off and the level sags.
+    const float wash = colonyWashout.load();
+    if (wash > 0.001f)
+    {
+        const float cutoff = 16000.0f - wash * 14200.0f;
+        const float coeff = juce::jlimit (0.02f, 1.0f,
+                                1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                                 * cutoff / (float) hostSampleRate));
+        for (int ch = 0; ch < juce::jmin (buffer.getNumChannels(), 2); ++ch)
+        {
+            float* ptr = buffer.getWritePointer (ch);
+            float& lp = washFilterState[(size_t) ch];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                lp += coeff * (ptr[i] - lp);
+                ptr[i] = lp;
+            }
+        }
+        buffer.applyGain (1.0f - wash * 0.45f);
+    }
+
+    // An urgent outburst repeats itself off the walls.
+    const float delayMix = delayAmount.load();
+    if (delayMix > 0.005f && delayBuffer.getNumSamples() > 0)
+    {
+        const int delaySamples = juce::jlimit (1, delayBuffer.getNumSamples() - 1,
+                                               (int) (hostSampleRate * 0.33));
+        const int chans = juce::jmin (buffer.getNumChannels(), 2);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const int readPos = (delayWritePos - delaySamples + delayBuffer.getNumSamples())
+                                    % delayBuffer.getNumSamples();
+            for (int ch = 0; ch < chans; ++ch)
+            {
+                float* dst = buffer.getWritePointer (ch);
+                float* line = delayBuffer.getWritePointer (ch);
+                const float echo = line[readPos];
+                line[delayWritePos] = dst[i] + echo * 0.55f * delayMix;
+                dst[i] += echo * delayMix;
+            }
+            delayWritePos = (delayWritePos + 1) % delayBuffer.getNumSamples();
+        }
+    }
+
+    // ...and washed out: everything smeared into a long tail.
+    const float rev = reverbAmount.load();
+    if (rev > 0.005f && buffer.getNumChannels() >= 2)
+    {
+        juce::Reverb::Parameters rp;
+        rp.roomSize = 0.72f + rev * 0.27f;
+        rp.damping = 0.35f;
+        rp.wetLevel = rev * 0.75f;
+        rp.dryLevel = 1.0f - rev * 0.35f;
+        rp.width = 1.0f;
+        rp.freezeMode = 0.0f;
+        outputReverb.setParameters (rp);
+        outputReverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples);
+    }
+
     outputMeter.store (buffer.getMagnitude (0, numSamples));
 }
 
@@ -1250,33 +2148,140 @@ void PreChorusProcessor::startVoice (float gain)
     if (best != nullptr)
     {
         best->active = true;
-        best->pos = 0;
+        for (auto& gr : best->grains) gr.active = false;
+        best->sinceGrain = 0.0;
+        best->headDone = false;
+        // Backwards? Then it starts at the impact and works its way out.
+        best->pos = colonyTimeDirection.load() < 0.0f
+                        ? (double) juce::jmax (1, renderedLength.load() - 2)
+                        : 0.0;
         best->gain = gain;
         best->id = ++voiceCounter;
     }
 }
 
-void PreChorusProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet, float duckGain)
+double PreChorusProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r,
+                                        double startPos, int num, float dry, float wet,
+                                        float duckGain, double rate)
 {
     const int total = r.audio.getNumSamples();
-    if (start >= total) return;
-    const int available = juce::jmin (num, total - start);
     const int hitAt = r.hitIndex >= 0 ? r.hitIndex : total;
+    const int chans = juce::jmin (out.getNumChannels(), 2);
+    if (chans <= 0 || total < 2) return (double) total;
 
-    for (int ch = 0; ch < juce::jmin (out.getNumChannels(), 2); ++ch)
+    double pos = startPos;
+
+    for (int i = 0; i < num; ++i)
     {
-        float* dst = out.getWritePointer (ch);
-        const float* src = r.audio.getReadPointer (ch) + start;
-        for (int i = 0; i < available; ++i)
+        if (pos >= (double) (total - 1)) { pos = (double) total; break; }
+        if (pos < 0.0)                   { pos = -1.0; break; }        // ran off the front, backwards
+
+        const int i0 = (int) pos;
+        const float frac = (float) (pos - (double) i0);
+        const float g = (i0 < hitAt) ? (wet * duckGain) : dry;
+
+        for (int ch = 0; ch < chans; ++ch)
         {
-            const int sampleIdx = start + i;
-            const float g = (sampleIdx < hitAt) ? (wet * duckGain) : dry;
-            dst[i] += src[i] * g;
+            const float* src = r.audio.getReadPointer (ch);
+            const float sample = src[i0] + (src[i0 + 1] - src[i0]) * frac;
+            out.getWritePointer (ch)[i] += sample * g;
         }
+
+        pos += rate;     // < 1 while the distress call drags the swell down in pitch
     }
+
+    return pos;
 }
 
 // ---------------- Sample File Management ----------------
+
+void PreChorusProcessor::renderVoiceGranular (juce::AudioBuffer<float>& out, const RenderedSample& r,
+                                              Voice& v, int num, float dry, float wet,
+                                              float duckGain, double rate, double stretch)
+{
+    const int total = r.audio.getNumSamples();
+    const int hitAt = r.hitIndex >= 0 ? r.hitIndex : total;
+    const int chans = juce::jmin (out.getNumChannels(), 2);
+    if (chans <= 0 || total < 4) { v.active = false; return; }
+
+    // ~60 ms grains, half-overlapped. Long enough to keep pitch, short enough to move.
+    const double grainLen = juce::jlimit (256.0, 8192.0, hostSampleRate * 0.06);
+    const double hop = grainLen * 0.5;
+    const double speed = std::abs (rate);
+    const double headAdvance = rate / juce::jmax (0.05, stretch);
+
+    for (int i = 0; i < num; ++i)
+    {
+        // Start a new grain every half grain-length of output - but only while the
+        // read head still has material left. Without this the scheduler keeps
+        // seeding grains at the clamped end position and the voice never stops.
+        v.sinceGrain += 1.0;
+        if (! v.headDone && v.sinceGrain >= hop)
+        {
+            v.sinceGrain -= hop;
+            for (auto& gr : v.grains)
+            {
+                if (gr.active) continue;
+                gr.active = true;
+                gr.start = v.pos;
+                gr.phase = 0.0;
+                break;
+            }
+        }
+
+        float sampL = 0.0f, sampR = 0.0f;
+        bool anyGrain = false;
+
+        for (auto& gr : v.grains)
+        {
+            if (! gr.active) continue;
+
+            const double readPos = gr.start + gr.phase * (rate < 0.0 ? -1.0 : 1.0);
+            if (readPos < 0.0 || readPos >= (double) (total - 1))
+            {
+                gr.active = false;
+                continue;
+            }
+
+            anyGrain = true;
+            const int i0 = (int) readPos;
+            const float frac = (float) (readPos - (double) i0);
+            const float win = 0.5f * (1.0f - std::cos ((float) (gr.phase / grainLen)
+                                                       * juce::MathConstants<float>::twoPi));
+
+            const float* l = r.audio.getReadPointer (0);
+            const float* rp = r.audio.getNumChannels() > 1 ? r.audio.getReadPointer (1) : l;
+            sampL += (l[i0] + (l[i0 + 1] - l[i0]) * frac) * win;
+            sampR += (rp[i0] + (rp[i0 + 1] - rp[i0]) * frac) * win;
+
+            gr.phase += speed;
+            if (gr.phase >= grainLen) gr.active = false;
+        }
+
+        if (anyGrain)
+        {
+            const int idx = juce::jlimit (0, total - 1, (int) v.pos);
+            const float g = (idx < hitAt) ? (wet * duckGain) : dry;
+            out.getWritePointer (0)[i] += sampL * g;
+            if (chans > 1) out.getWritePointer (1)[i] += sampR * g;
+        }
+
+        v.pos += headAdvance;
+        if (v.pos >= (double) (total - 1) || v.pos < 0.0)
+        {
+            v.headDone = true;
+            v.pos = juce::jlimit (0.0, (double) (total - 1), v.pos);
+        }
+
+        if (v.headDone)
+        {
+            // Let the grains already in flight finish, then stop for good.
+            bool stillRinging = false;
+            for (const auto& gr : v.grains) stillRinging |= gr.active;
+            if (! stillRinging) { v.active = false; return; }
+        }
+    }
+}
 
 void PreChorusProcessor::refreshFolderList (const juce::File& f)
 {
@@ -1291,6 +2296,10 @@ void PreChorusProcessor::refreshFolderList (const juce::File& f)
 
 bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter)
 {
+    // One dropped sample in a hundred gives it something to say, minutes later.
+    if (distressRng.nextInt (100) == 0)
+        funnyCrySeconds = 120.0f + distressRng.nextFloat() * 120.0f;   // 2 to 4 minutes
+
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0) return false;
     const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 12.0));
@@ -1373,10 +2382,8 @@ bool PreChorusProcessor::exportWav (const juce::File& dest)
 
 void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    auto state = apvts.copyState();
-    state.setProperty ("file", currentFile.getFullPathName(), nullptr);
-    state.setProperty ("activeSlot", activeSlot.load(), nullptr);
-    state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    auto state = buildFullState();
+    state.setProperty ("presetFile", currentPresetFile.getFullPathName(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1386,12 +2393,8 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
-        apvts.replaceState (state);
-        juce::File f (state.getProperty ("file", "").toString());
-        if (f.existsAsFile()) loadSampleFile (f);
-        activeSlot.store (state.getProperty ("activeSlot", 0));
-        captureLockState.store (state.getProperty ("captureLock", false));
-        dirty = true;
+        applyFullState (state);
+        currentPresetFile = juce::File (state.getProperty ("presetFile", "").toString());
     }
 }
 

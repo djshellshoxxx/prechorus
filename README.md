@@ -2,6 +2,8 @@
 
 32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
 
+**Version 1.3.0**
+
 **The Signature Sound**: A cloud of related voices becoming progressively more recognizable, coherent, and intimate until they meet the original drop or event.
 
 ---
@@ -84,6 +86,47 @@
 - **Drag-and-Drop Loading**: Drop a WAV/AIFF/FLAC/MP3/OGG file straight onto the plugin window to load it as the source.
 - **Spacebar Preview**: Press Space anywhere in the plugin window to trigger playback, same as the PLAY button.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
+
+### 8. Workflow, Presets & Control
+- **In-Plugin Manual**: The `?` button (or File > Manual) opens a full manual covering every control, the workflow, the GUI tour, keyboard shortcuts, and the version number.
+- **File Menu**: Open Preset, Save Preset, Save Preset As, Export Audio to WAV, Reset to Defaults, Open Preset Folder, Options and Manual — all from one header dropdown.
+- **User Presets**: Your own setups save as `.pcpreset` files (Documents/PreChorus/Presets by default) and carry the whole state, including MIDI mappings.
+- **Options Page**: Turn hover tooltips on or off, review and clear MIDI mappings, open the audio / MIDI device selector (standalone), and jump to your preset folder.
+- **Reset**: One button returns every setting and function to its factory default.
+- **Random**: Generates a fresh sound each press. After the first press every further click resets to defaults first, so no two results build on each other.
+- **A/B Compare**: Two full snapshots with a COPY button to duplicate one into the other.
+- **Right-Click Any Control**: Reset to default, set a specific value, MIDI Learn (move a controller to bind it), or clear a mapping.
+- **MIDI CC Learn**: Real CC mapping, saved with the plugin state and with presets, listed and clearable in Options.
+- **Hover Tooltips**: Every control explains itself after a moment's hover; switchable in Options.
+- **Knob Handling**: Double-click resets to default, vertical drag is fine, Shift is coarse and Ctrl is ultra-fine. Values animate over 80 ms and the readout appears above the knob on hover.
+
+### 9. The Colony
+The constellation is a living simulation, and every orb is one audio element - so what happens to
+the orbs happens to the sound.
+- **Click gestures**: left-click x4 splits three orbs, right-click x3 breeds a red one,
+  middle-click x2 starts a clutch of eggs, and clicking a yellow orb lights a fuse.
+- **Drag an orb**: slowly to mutate the sound and throw off fractals, fast to destroy.
+- **Colony buttons**: Add Gravity, Release Gravity, Add Enzyme, Radiate and Add Water - and
+  leaning on any of them has consequences of its own.
+- **Colour rules**: green hunts red and detonates on contact; green brushing a plain orb twice
+  turns time around; blue crashing into pink kills the blue one.
+- **Reversal**: audio and animation wind down, stop, and run backwards - never instantly.
+- **Breeding**: eggs hatch into coloured orbs that whistle, live 5-30 minutes and leave an
+  oscillation behind. Clutch size decides what happens to the pace of everything.
+- **Things that happen on their own**: visitors, spontaneous orbs, slow resizes, and the
+  occasional asteroid that shatters the colony into a hundred pieces.
+- **Score**: points for every change you make. It means nothing. Switchable in Options.
+
+### 10. The Voxbox
+A formant-synthesis voice that builds every utterance from scratch, so it always sounds like
+someone saying something and never twice the same way. Left alone it calls for help; it also
+speaks for blown fuses, dead blue orbs, arriving visitors, explosions, and long fuses lit by the
+RANDOM button, a preset load, a dropped sample or a right-click - in English, Spanish or French.
+
+### 11. Visual Identity
+Built to the shared visual identity spec used across the plugin range — same palette, typography,
+knob and button shapes, 8px layout grid, 32px header strip, meter behaviour, and the signature
+accent notch in the top-left corner with the version stamped bottom-right. See `theme.md`.
 
 ---
 
