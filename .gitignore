@@ -3,3 +3,4 @@ build/
 .vs/
 .DS_Store
 build-linux/
+dist/

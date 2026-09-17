@@ -44,7 +44,7 @@ jobs:
         with:
           name: PreChorus-${{ runner.os }}
           path: |
-            build/PreChorus_artefacts/**/VST3/**
-            build/PreChorus_artefacts/**/CLAP/**
-            build/PreChorus_artefacts/**/Standalone/**
+            build/PreChorus_artefacts/Release/VST3/**
+            build/PreChorus_artefacts/Release/CLAP/**
+            build/PreChorus_artefacts/Release/Standalone/**
           if-no-files-found: error
