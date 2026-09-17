@@ -1,13 +1,14 @@
 # PreChorus — Project Progress
 
 **Current version:** 1.4.0
-**Last updated:** 2026-09-16
-**Build:** VST3 + CLAP + AU + Standalone, JUCE 8.0.4.
-CMake configures clean on Windows (MSVC 2022 x64, CLAP 1.2.7) and all seven project sources
-compile with no errors or warnings. The full link has **not** been completed on this dev box:
-it has 3.88 GB of RAM shared with a running BOINC client, and the JUCE module translation
-units exhaust physical memory before linking. CI (`.github/workflows/build.yml`) builds
-Windows and Linux on runners that have the headroom.
+**Last updated:** 2026-09-17
+**Build:** VST3 + CLAP + AU + Standalone, JUCE 8.0.4 — green.
+Verified in CI (run 35191307532, 6m14s): **Linux** and **Windows** both build and link VST3 +
+CLAP + Standalone. Artefacts: `PreChorus-Linux` (14.8 MB), `PreChorus-Windows` (10.4 MB).
+Not built locally: this dev box has 3.88 GB of RAM shared with a running BOINC client whose
+`boinc-buda-runner` WSL distro holds ~0.7–1.4 GB and restarts itself, so MSVC's JUCE module
+translation units exhaust physical memory before linking. All seven project sources compile
+clean locally; only the JUCE modules run out of room.
 
 Tracks the project against `include.md` (the checklist every VST in the range must satisfy),
 `theme.md` (the shared visual identity spec), and the colony/voxbox work layered on top.
@@ -126,9 +127,9 @@ the CLAP and the VST3 compile from the same sources and share the same parameter
 `clap_juce_extensions_plugin()` is declared with `CLAP_FEATURES audio-effect chorus stereo`
 and the CLAP id `com.sheldondavidson.prechorus`. Turn it off with `-DPRECHORUS_BUILD_CLAP=OFF`.
 
-**Linux** needs no source changes: JUCE covers the platform, and `Source/` contains no
-`windows.h`, `_WIN32`, `__declspec` or `#pragma comment` — checked by grep, not yet confirmed by
-a completed Linux compile. What it needed was build plumbing:
+**Linux** needed no source changes: JUCE covers the platform, `Source/` contains no
+`windows.h`, `_WIN32`, `__declspec` or `#pragma comment`, and the Linux CI job compiles and
+links the whole plugin unmodified. What it needed was build plumbing:
 
 - `FORMATS` is now assembled per platform, since AU only exists on Apple and asking for it
   elsewhere just produces CMake noise.

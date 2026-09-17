@@ -161,7 +161,7 @@ CLAP can be turned off with `-DPRECHORUS_BUILD_CLAP=OFF` if you only want VST3 a
 ```
 Installs the build dependencies it is missing, then configures and builds VST3, CLAP and
 Standalone into `build-linux/`. Written against Ubuntu 26.04 (gcc 15, Ninja) and usable under
-WSL; the Linux CI job builds the same configuration on every push.
+WSL. The Linux CI job builds and links this same configuration on every push.
 
 To install for the current user:
 ```bash
@@ -178,7 +178,9 @@ cmake --build build --config Release
 
 ## CI
 `.github/workflows/build.yml` builds Linux and Windows on every push to `main` or a `feat/**`
-branch and uploads the VST3, CLAP and Standalone artefacts.
+branch and uploads the VST3, CLAP and Standalone artefacts. Both platforms are green as of
+v1.4.0; grab a build from the run's **Artifacts** section rather than compiling locally if you
+just want to install it.
 
 ## License
 MIT
