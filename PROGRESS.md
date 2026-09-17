@@ -1,8 +1,13 @@
 # PreChorus — Project Progress
 
-**Current version:** 1.3.0
+**Current version:** 1.4.0
 **Last updated:** 2026-09-16
-**Build:** VST3 + AU + Standalone, JUCE 8.0.4, MSVC 2022 x64 — building clean.
+**Build:** VST3 + CLAP + AU + Standalone, JUCE 8.0.4.
+CMake configures clean on Windows (MSVC 2022 x64, CLAP 1.2.7) and all seven project sources
+compile with no errors or warnings. The full link has **not** been completed on this dev box:
+it has 3.88 GB of RAM shared with a running BOINC client, and the JUCE module translation
+units exhaust physical memory before linking. CI (`.github/workflows/build.yml`) builds
+Windows and Linux on runners that have the headroom.
 
 Tracks the project against `include.md` (the checklist every VST in the range must satisfy),
 `theme.md` (the shared visual identity spec), and the colony/voxbox work layered on top.
@@ -112,7 +117,30 @@ gestures still work and nothing fires by itself.
 
 ---
 
-## 7. Verified
+## 7. Formats — CLAP and Linux
+
+**CLAP** comes from [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions),
+fetched by CMake and pointed at the existing `PreChorus` target. It is a wrapper, not a port:
+the CLAP and the VST3 compile from the same sources and share the same parameter tree and
+`getStateInformation` payload, so a preset saved in one opens in the other. CLAP 1.2.7.
+`clap_juce_extensions_plugin()` is declared with `CLAP_FEATURES audio-effect chorus stereo`
+and the CLAP id `com.sheldondavidson.prechorus`. Turn it off with `-DPRECHORUS_BUILD_CLAP=OFF`.
+
+**Linux** needs no source changes: JUCE covers the platform, and `Source/` contains no
+`windows.h`, `_WIN32`, `__declspec` or `#pragma comment` — checked by grep, not yet confirmed by
+a completed Linux compile. What it needed was build plumbing:
+
+- `FORMATS` is now assembled per platform, since AU only exists on Apple and asking for it
+  elsewhere just produces CMake noise.
+- `build-linux.sh` checks for the required dev packages, installs what is missing, then
+  configures and builds VST3 + CLAP + Standalone into `build-linux/` with Ninja.
+- `.github/workflows/build.yml` builds Linux and Windows on every push and uploads all three
+  formats as artefacts.
+
+`JUCE_WEB_BROWSER=0` and `JUCE_USE_CURL=0` keep webkit and curl out of the Linux dependency
+list, which is most of what usually makes a JUCE Linux build awkward.
+
+## 8. Verified
 
 - Every roll threshold checked by simulation: 1-in-100/40/30/20/10/5/4/3 gates all land on their
   nominal rates; clutch sizes 10/30/20 at 10/25/20 % plus the small extra share they get from
@@ -122,7 +150,7 @@ gestures still work and nothing fires by itself.
   system generator so two instances never march in step.
 - Standalone launched and the colony UI confirmed rendering.
 
-## 8. Next up
+## 9. Next up
 
 - [ ] Audition pass with real audio for the granular stretch and the reverb tail levels.
 - [ ] User preset browser in the header dropdown alongside the factory list.
@@ -130,7 +158,7 @@ gestures still work and nothing fires by itself.
 - [ ] Undo / redo.
 - [ ] macOS build pass and `auval`.
 
-## 9. Kept in mind
+## 10. Kept in mind
 
 - This build may become the **pro** version with a **free** version to follow; the editor's
   feature groups map cleanly onto a reduced free layout.

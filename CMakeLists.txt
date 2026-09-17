@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
-project(PreChorus VERSION 1.3.0)
+project(PreChorus VERSION 1.4.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+option(PRECHORUS_BUILD_CLAP "Also build the CLAP format via clap-juce-extensions" ON)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -10,11 +12,17 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+# AU only exists on Apple; asking for it elsewhere just makes noise.
+set(PRECHORUS_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND PRECHORUS_FORMATS AU)
+endif()
+
 juce_add_plugin(PreChorus
     COMPANY_NAME "SheldonDavidson"
     PLUGIN_MANUFACTURER_CODE Shdv
     PLUGIN_CODE PrCh
-    FORMATS VST3 AU Standalone
+    FORMATS ${PRECHORUS_FORMATS}
     PRODUCT_NAME "PreChorus"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
@@ -44,3 +52,20 @@ target_compile_definitions(PreChorus PUBLIC
 target_link_libraries(PreChorus
     PRIVATE juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+# --- CLAP -------------------------------------------------------------------
+# clap-juce-extensions wraps the existing JUCE target, so the CLAP build shares
+# every source file, parameter and bit of state with the VST3.
+if(PRECHORUS_BUILD_CLAP)
+    FetchContent_Declare(clap-juce-extensions
+        GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+        GIT_TAG main
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(clap-juce-extensions)
+
+    clap_juce_extensions_plugin(TARGET PreChorus
+        CLAP_ID "com.sheldondavidson.prechorus"
+        CLAP_FEATURES audio-effect chorus stereo
+        CLAP_MANUAL_URL "https://github.com/djshellshoxxx/prechorus"
+        CLAP_SUPPORT_URL "https://github.com/djshellshoxxx/prechorus/issues")
+endif()

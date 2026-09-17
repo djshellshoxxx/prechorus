@@ -1,8 +1,8 @@
 # PreChorus
 
-32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
+32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + CLAP + AU + Standalone on Windows, macOS and Linux, made with JUCE.
 
-**Version 1.3.0**
+**Version 1.4.0**
 
 **The Signature Sound**: A cloud of related voices becoming progressively more recognizable, coherent, and intimate until they meet the original drop or event.
 
@@ -89,7 +89,7 @@
 
 ### 8. Workflow, Presets & Control
 - **In-Plugin Manual**: The `?` button (or File > Manual) opens a full manual covering every control, the workflow, the GUI tour, keyboard shortcuts, and the version number.
-- **File Menu**: Open Preset, Save Preset, Save Preset As, Export Audio to WAV, Reset to Defaults, Open Preset Folder, Options and Manual — all from one header dropdown.
+- **File Menu**: Open Preset, Save Preset, Save Preset As, Export Audio to WAV, Reset to Defaults, Open Preset Folder, Options and Manual â€” all from one header dropdown.
 - **User Presets**: Your own setups save as `.pcpreset` files (Documents/PreChorus/Presets by default) and carry the whole state, including MIDI mappings.
 - **Options Page**: Turn hover tooltips on or off, review and clear MIDI mappings, open the audio / MIDI device selector (standalone), and jump to your preset folder.
 - **Reset**: One button returns every setting and function to its factory default.
@@ -124,11 +124,26 @@ speaks for blown fuses, dead blue orbs, arriving visitors, explosions, and long 
 RANDOM button, a preset load, a dropped sample or a right-click - in English, Spanish or French.
 
 ### 11. Visual Identity
-Built to the shared visual identity spec used across the plugin range — same palette, typography,
+Built to the shared visual identity spec used across the plugin range â€” same palette, typography,
 knob and button shapes, 8px layout grid, 32px header strip, meter behaviour, and the signature
 accent notch in the top-left corner with the version stamped bottom-right. See `theme.md`.
 
 ---
+
+## Formats
+
+| Format | Windows | macOS | Linux |
+|---|---|---|---|
+| VST3 | yes | yes | yes |
+| CLAP | yes | yes | yes |
+| AU | - | yes | - |
+| Standalone | yes | yes | yes |
+
+The CLAP build is produced by [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions)
+wrapping the same plugin target, so it shares every source file, parameter and saved state with the
+VST3 â€” presets and `.pcpreset` files move between the two freely.
+
+CLAP can be turned off with `-DPRECHORUS_BUILD_CLAP=OFF` if you only want VST3 and Standalone.
 
 ## Build (Windows)
 1. Open PowerShell **as Administrator**:
@@ -136,13 +151,34 @@ accent notch in the top-left corner with the version stamped bottom-right. See `
    cd C:\Users\new\desktop\antigravityprojects\prechorus
    .\build.ps1
    ```
-2. Automatically builds VST3 and Standalone targets and installs `PreChorus.vst3` to `C:\Program Files\Common Files\VST3\PreChorus.vst3`.
+2. Builds the VST3, CLAP and Standalone targets and installs `PreChorus.vst3` to
+   `C:\Program Files\Common Files\VST3\PreChorus.vst3`. The CLAP lands in
+   `C:\Program Files\Common Files\CLAP\PreChorus.clap`.
 
-## Build (macOS / Linux)
+## Build (Linux)
+```bash
+./build-linux.sh
+```
+Installs the build dependencies it is missing, then configures and builds VST3, CLAP and
+Standalone into `build-linux/`. Written against Ubuntu 26.04 (gcc 15, Ninja) and usable under
+WSL; the Linux CI job builds the same configuration on every push.
+
+To install for the current user:
+```bash
+mkdir -p ~/.vst3 ~/.clap
+cp -r build-linux/PreChorus_artefacts/Release/VST3/PreChorus.vst3 ~/.vst3/
+cp    build-linux/PreChorus_artefacts/Release/CLAP/PreChorus.clap ~/.clap/
+```
+
+## Build (macOS / any platform, by hand)
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
+
+## CI
+`.github/workflows/build.yml` builds Linux and Windows on every push to `main` or a `feat/**`
+branch and uploads the VST3, CLAP and Standalone artefacts.
 
 ## License
 MIT

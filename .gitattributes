@@ -1,0 +1,6 @@
+# Shell scripts and CI YAML must keep LF endings or they break on Linux runners
+# (a CRLF shebang fails with "bad interpreter: /usr/bin/env bash^M").
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+build-linux.sh text eol=lf
