@@ -557,6 +557,15 @@ HelpOverlay::HelpOverlay()
         "PRECHORUS - Complete 32-Voice Swarm & Convergence Engine\n\n"
         "The Signature Sound: A cloud of related voices becoming progressively more recognizable "
         "and coherent until they meet the original drop or event.\n\n"
+        "QUICK WORKFLOW:\n"
+        "1. LOAD or capture a source.  2. Pick a factory preset or character.  3. Shape swarm/convergence.\n"
+        "4. Press Space/PLAY to audition.  5. EXPORT WAV or drag the rendered result to your DAW.\n\n"
+        "KEYBOARD SHORTCUTS:\n"
+        "• Space: preview the current swarm.\n"
+        "• Esc: stop active preview voices.\n"
+        "• R: randomize sound-design parameters.\n"
+        "• G: regenerate the deterministic swarm seed.\n"
+        "• H / F1: open this help panel.\n\n"
         "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
         "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
         "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
@@ -1147,7 +1156,16 @@ bool PreChorusEditor::isInterestedInFileDrag (const juce::StringArray& files)
 void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
-        if (proc.loadSampleFile (juce::File (f), true)) return;
+    {
+        const juce::File file (f);
+        if (proc.loadSampleFile (file, true))
+        {
+            waveform.rebuild();
+            setStatus ("Loaded: " + file.getFileName());
+            return;
+        }
+    }
+    setStatus ("Dropped file could not be loaded.");
 }
 
 void PreChorusEditor::setStatus (const juce::String& text)
