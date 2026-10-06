@@ -144,11 +144,13 @@ private:
     void timerCallback() override;
     Knob& makeKnob (const juce::String& id, const juce::String& text);
     void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
+    void setStatus (const juce::String& text);
 
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
+    juce::TooltipWindow tooltipWindow;
 
-    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel;
+    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
                      regenSeedButton { "REGEN" }, helpButton { "?" };
