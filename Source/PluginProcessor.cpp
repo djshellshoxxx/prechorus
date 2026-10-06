@@ -502,6 +502,9 @@ void PreChorusProcessor::timerCallback()
 
 void PreChorusProcessor::armCapture()
 {
+    if (captureState.load() == CaptureState::done)
+        finalizePendingCapture();
+
     captureState.store (CaptureState::armed);
     captureWritePos = 0;
     captureSilenceCounter = 0;
@@ -515,6 +518,9 @@ void PreChorusProcessor::triggerManualCapture()
     }
     else
     {
+        if (captureState.load() == CaptureState::done)
+            finalizePendingCapture();
+
         captureWritePos = 0;
         captureSilenceCounter = 0;
         captureTargetSamples = (int) (hostSampleRate * 8.0);
