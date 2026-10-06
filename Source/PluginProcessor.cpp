@@ -1485,8 +1485,13 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
         apvts.replaceState (state);
+        const int restoredSourceMode = (int) param (IDs::sourceMode);
         juce::File f (state.getProperty ("file", "").toString());
-        if (f.existsAsFile()) loadSampleFile (f);
+        if (f.existsAsFile())
+        {
+            loadSampleFile (f);
+            setParam (IDs::sourceMode, (float) restoredSourceMode);
+        }
         activeSlot.store (state.getProperty ("activeSlot", 0));
         captureLockState.store (state.getProperty ("captureLock", false));
         currentCompareSlot.store (juce::jlimit (0, 1, (int) state.getProperty ("currentCompareSlot", 0)));
