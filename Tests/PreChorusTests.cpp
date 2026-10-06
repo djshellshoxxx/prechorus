@@ -32,6 +32,17 @@ public:
             expect (! p.isBusesLayoutSupported (badOut));
         }
 
+        beginTest ("rendered swarm reports a non-zero host tail");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getNonexistentChildFile ("prechorus-tail", ".wav", false);
+            expect (p.exportWav (file));
+            expectGreaterThan (p.getTailLengthSeconds(), 0.1);
+            file.deleteFile();
+        }
+
         beginTest ("host state round-trip restores parameters");
         {
             PreChorusProcessor a;
