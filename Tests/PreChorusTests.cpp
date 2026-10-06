@@ -32,6 +32,32 @@ public:
             expect (! p.isBusesLayoutSupported (badOut));
         }
 
+        beginTest ("automatic capture defers history allocation off the audio thread");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 128);
+            p.selectCaptureSlot (1);
+            p.setParam (IDs::captureMode, 1.0f);
+            p.armCapture();
+
+            for (int block = 0; block < 55; ++block)
+            {
+                juce::AudioBuffer<float> buffer (2, 128);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < 128; ++i)
+                        buffer.setSample (ch, i, 0.5f);
+                juce::MidiBuffer midi;
+                p.processBlock (buffer, midi);
+            }
+
+            expect (p.getCaptureState() == PreChorusProcessor::CaptureState::done);
+            expect (! p.isSlotFilled (1));
+
+            p.stopCapture();
+            expect (p.getCaptureState() == PreChorusProcessor::CaptureState::idle);
+            expect (p.isSlotFilled (1));
+        }
+
         beginTest ("input meter detects signal on either stereo channel");
         {
             PreChorusProcessor p;
