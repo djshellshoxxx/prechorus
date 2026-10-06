@@ -168,6 +168,11 @@ public:
             PreChorusProcessor restored;
             restored.setStateInformation (state.getData(), (int) state.getSize());
             expectEquals ((int) restored.param (IDs::sourceMode), 0);
+            expect (restored.getCurrentFile() == juce::File());
+
+            restored.serviceDeferredStateRestore();
+            expect (restored.getCurrentFile() == wavFile);
+            expectEquals ((int) restored.param (IDs::sourceMode), 0);
             wavFile.deleteFile();
         }
 
