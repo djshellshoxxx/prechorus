@@ -32,6 +32,20 @@ public:
             expect (! p.isBusesLayoutSupported (badOut));
         }
 
+        beginTest ("input meter detects signal on either stereo channel");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 64);
+            juce::AudioBuffer<float> buffer (2, 64);
+            buffer.clear();
+            buffer.applyGain (1, 0, 64, 0.0f);
+            for (int i = 0; i < 64; ++i)
+                buffer.setSample (1, i, 0.8f);
+            juce::MidiBuffer midi;
+            p.processBlock (buffer, midi);
+            expectGreaterThan (p.getLiveInputMeter(), 0.79f);
+        }
+
         beginTest ("rendered swarm reports a non-zero host tail");
         {
             PreChorusProcessor p;
