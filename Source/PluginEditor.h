@@ -155,7 +155,9 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel, outputLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
-                     regenSeedButton { "REGEN" }, helpButton { "?" };
+                     regenSeedButton { "REGEN" }, helpButton { "?" },
+                     storeAButton { "STORE A" }, storeBButton { "STORE B" }, recallAButton { "A" }, recallBButton { "B" },
+                     savePresetButton { "SAVE PRESET" }, loadPresetButton { "LOAD PRESET" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
