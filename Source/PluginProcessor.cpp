@@ -258,6 +258,19 @@ juce::StringArray PreChorusProcessor::getFactoryPresetNames()
              "Ambient Drone Freeze", "Aggressive Distortion Drop", "Trap Vocal Stutter" };
 }
 
+juce::StringArray PreChorusProcessor::getMatchingFactoryPresetNames (const juce::String& filter)
+{
+    const auto all = getFactoryPresetNames();
+    if (filter.trim().isEmpty()) return all;
+
+    juce::StringArray matches;
+    const auto needle = filter.trim().toLowerCase();
+    for (const auto& name : all)
+        if (name.toLowerCase().contains (needle))
+            matches.add (name);
+    return matches;
+}
+
 void PreChorusProcessor::loadFactoryPreset (int index)
 {
     // Shapes the swarm/tone/convergence character only; leaves source, capture, and per-take
