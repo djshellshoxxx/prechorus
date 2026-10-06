@@ -1203,7 +1203,9 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     targetConfidence.store (conf);
 
     // Live Input Meter & Sidechain Ducking Follower
-    const float inPeak = buffer.getMagnitude (0, numSamples);
+    float inPeak = 0.0f;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        inPeak = juce::jmax (inPeak, buffer.getMagnitude (ch, 0, numSamples));
     inputMeter.store (inPeak);
 
     const float duckAmt = param (IDs::ducking);
