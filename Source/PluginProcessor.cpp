@@ -476,6 +476,9 @@ std::shared_ptr<const RenderedSample> PreChorusProcessor::getRendered() const
 
 void PreChorusProcessor::timerCallback()
 {
+    if (captureState.load() == CaptureState::done)
+        finalizePendingCapture();
+
     if (realtimeReaders.load (std::memory_order_acquire) == 0 && ! retiredRendered.empty())
         retiredRendered.clear();
 
@@ -519,11 +522,23 @@ void PreChorusProcessor::triggerManualCapture()
     }
 }
 
-void PreChorusProcessor::stopCapture()
+void PreChorusProcessor::requestCaptureFinalizeRealtime()
 {
-    if (captureState.load() == CaptureState::recording && captureWritePos > (int) (hostSampleRate * 0.05))
+    if (captureState.load() != CaptureState::recording)
+        return;
+
+    const int capturedLen = captureWritePos;
+    pendingCaptureSamples.store (capturedLen > (int) (hostSampleRate * 0.05) ? capturedLen : 0,
+                                 std::memory_order_release);
+    captureState.store (CaptureState::done);
+    captureWritePos = 0;
+}
+
+void PreChorusProcessor::finalizePendingCapture()
+{
+    const int capturedLen = pendingCaptureSamples.exchange (0, std::memory_order_acq_rel);
+    if (capturedLen > 0)
     {
-        const int capturedLen = captureWritePos;
         juce::AudioBuffer<float> newBuf (2, capturedLen);
         for (int ch = 0; ch < 2; ++ch)
             newBuf.copyFrom (ch, 0, captureRingBuffer, ch, 0, capturedLen);
@@ -533,8 +548,12 @@ void PreChorusProcessor::stopCapture()
         {
             for (int i = 0; i < kNumHistorySlots; ++i)
             {
-                int nextCandidate = (slot + i + 1) % kNumHistorySlots;
-                if (! captureSlotFilled[(size_t) nextCandidate]) { slot = nextCandidate; break; }
+                const int nextCandidate = (slot + i + 1) % kNumHistorySlots;
+                if (! captureSlotFilled[(size_t) nextCandidate])
+                {
+                    slot = nextCandidate;
+                    break;
+                }
             }
         }
 
@@ -547,7 +566,21 @@ void PreChorusProcessor::stopCapture()
         }
         dirty = true;
     }
+
     captureState.store (CaptureState::idle);
+}
+
+void PreChorusProcessor::stopCapture()
+{
+    const auto state = captureState.load();
+    if (state == CaptureState::recording)
+        requestCaptureFinalizeRealtime();
+
+    if (captureState.load() == CaptureState::done)
+        finalizePendingCapture();
+    else
+        captureState.store (CaptureState::idle);
+
     captureWritePos = 0;
 }
 
@@ -1283,12 +1316,12 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             if ((captureWritePos > (int) (hostSampleRate * 0.3) && captureSilenceCounter > (int) (hostSampleRate * 0.35))
                 || captureWritePos >= captureTargetSamples)
             {
-                stopCapture();
+                requestCaptureFinalizeRealtime();
             }
         }
         else if (captureWritePos >= captureTargetSamples)
         {
-            stopCapture();
+            requestCaptureFinalizeRealtime();
         }
     }
 
