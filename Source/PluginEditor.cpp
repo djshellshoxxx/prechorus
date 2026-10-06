@@ -682,6 +682,12 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (randomButton);
     addAndMakeVisible (regenSeedButton);
     addAndMakeVisible (helpButton);
+    addAndMakeVisible (storeAButton);
+    addAndMakeVisible (storeBButton);
+    addAndMakeVisible (recallAButton);
+    addAndMakeVisible (recallBButton);
+    addAndMakeVisible (savePresetButton);
+    addAndMakeVisible (loadPresetButton);
 
     prevButton.onClick = [this] {
         proc.prevSample();
@@ -713,6 +719,51 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); setStatus ("Sound-design parameters randomized."); };
     regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); setStatus ("Deterministic swarm seed regenerated."); };
     helpButton.onClick      = [this] { help.setVisible (true); setStatus ("Help opened."); };
+
+    storeAButton.onClick = [this] {
+        setStatus (proc.storeCompareState (0) ? "Stored current sound in A." : "Could not store A state.");
+    };
+    storeBButton.onClick = [this] {
+        setStatus (proc.storeCompareState (1) ? "Stored current sound in B." : "Could not store B state.");
+    };
+    recallAButton.onClick = [this] {
+        const bool ok = proc.recallCompareState (0);
+        waveform.rebuild();
+        setStatus (ok ? "Recalled A." : "A has not been stored yet.");
+    };
+    recallBButton.onClick = [this] {
+        const bool ok = proc.recallCompareState (1);
+        waveform.rebuild();
+        setStatus (ok ? "Recalled B." : "B has not been stored yet.");
+    };
+
+    savePresetButton.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser> ("Save PreChorus User Preset", juce::File(), "*.pchpreset");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this] (const juce::FileChooser& fc) {
+                auto f = fc.getResult();
+                if (f != juce::File())
+                {
+                    const auto out = f.withFileExtension ("pchpreset");
+                    setStatus (proc.saveUserPreset (out) ? "Saved preset: " + out.getFileName()
+                                                         : "User preset save failed.");
+                }
+            });
+    };
+
+    loadPresetButton.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser> ("Load PreChorus User Preset", juce::File(), "*.pchpreset");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this] (const juce::FileChooser& fc) {
+                const auto f = fc.getResult();
+                if (f.existsAsFile())
+                {
+                    const bool ok = proc.loadUserPreset (f);
+                    waveform.rebuild();
+                    setStatus (ok ? "Loaded preset: " + f.getFileName() : "Invalid or unsupported PreChorus preset.");
+                }
+            });
+    };
 
     exportButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
@@ -912,8 +963,16 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     syncCombo.setTooltip ("Select the tempo-synced swell duration.");
     rangeCombo.setTooltip ("Set the maximum pitch sweep range.");
     reducedMotionToggle.setTooltip ("Stops decorative orbit and transient-flash animation while retaining the audio meters and functional waveform updates.");
+    storeAButton.setTooltip ("Store the current parameter state in comparison slot A.");
+    storeBButton.setTooltip ("Store the current parameter state in comparison slot B.");
+    recallAButton.setTooltip ("Recall comparison slot A without changing loaded/captured source media.");
+    recallBButton.setTooltip ("Recall comparison slot B without changing loaded/captured source media.");
+    savePresetButton.setTooltip ("Save current parameters as a versioned .pchpreset file. Source audio is not embedded.");
+    loadPresetButton.setTooltip ("Load a validated .pchpreset parameter file without replacing source audio.");
 
     addChildComponent (help);
+    setResizable (true, true);
+    setResizeLimits (1000, 700, 1800, 1200);
     setSize (1240, 840);
     setWantsKeyboardFocus (true);
     startTimerHz (15);
@@ -1106,6 +1165,12 @@ void PreChorusEditor::resized()
     auto statusRow = area.removeFromTop (18);
     reducedMotionToggle.setBounds (statusRow.removeFromRight (118));
     outputLabel.setBounds (statusRow.removeFromRight (118));
+    recallBButton.setBounds (statusRow.removeFromRight (24)); statusRow.removeFromRight (2);
+    recallAButton.setBounds (statusRow.removeFromRight (24)); statusRow.removeFromRight (4);
+    storeBButton.setBounds (statusRow.removeFromRight (54)); statusRow.removeFromRight (2);
+    storeAButton.setBounds (statusRow.removeFromRight (54)); statusRow.removeFromRight (4);
+    loadPresetButton.setBounds (statusRow.removeFromRight (78)); statusRow.removeFromRight (2);
+    savePresetButton.setBounds (statusRow.removeFromRight (78)); statusRow.removeFromRight (6);
     statusLabel.setBounds (statusRow);
 
     // 3. Visualizers Row (32-Voice Constellation + Interactive Waveform)
