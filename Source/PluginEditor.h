@@ -44,11 +44,13 @@ class VoiceOrbitVisualizer : public juce::Component, private juce::Timer
 public:
     explicit VoiceOrbitVisualizer (PreChorusProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (30); }
     void paint (juce::Graphics&) override;
+    void setReducedMotion (bool shouldReduce) { reducedMotion = shouldReduce; }
 private:
     void timerCallback() override;
     PreChorusProcessor& proc;
     float phase = 0.0f;
     float smoothedOut = 0.0f, flashRing = 0.0f;
+    bool reducedMotion = false;
 };
 
 // Interactive Waveform Display with Tension Curves and Trim
@@ -150,7 +152,7 @@ private:
     PCLookAndFeel lnf;
     juce::TooltipWindow tooltipWindow;
 
-    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel;
+    juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel, outputLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
                      regenSeedButton { "REGEN" }, helpButton { "?" };
@@ -162,7 +164,8 @@ private:
     std::array<juce::TextButton, 8> historySlotButtons;
 
     // Toggles & Alignment
-    juce::ToggleButton freezeToggle { "FREEZE" }, revConvergeToggle { "REV CONV" }, alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    juce::ToggleButton freezeToggle { "FREEZE" }, revConvergeToggle { "REV CONV" }, alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" },
+                       reducedMotionToggle { "REDUCED MOTION" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, revConvergeAtt, alignAtt, syncAtt;
     juce::ComboBox syncCombo, rangeCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
