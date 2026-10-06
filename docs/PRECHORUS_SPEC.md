@@ -1,7 +1,7 @@
 # PreChorus Product Specification
 
 **Status:** Active implementation specification  
-**Version:** 1.1  
+**Version:** 1.2  
 **Product:** PreChorus  
 **Shared baseline:** [Circuit Drift Labs Shared Audio Plugin Standard](standards/CDL_PLUGIN_BASELINE.md)
 
@@ -107,7 +107,13 @@ A status message MUST not interrupt audio processing or require a modal dialog f
 
 Rotary controls MUST support double-click reset through JUCE's parameter attachment/default-value behavior. Reset actions MUST preserve source audio and capture history unless explicitly documented otherwise.
 
-### 7.4 Discoverability
+### 7.4 Reduced motion and output metering
+
+The editor MUST provide a Reduced Motion control that stops decorative orbital and transient-flash animation without disabling functional waveform or meter updates.
+
+The editor MUST show a labeled post-processing stereo peak readout in dBFS. The readout MUST visibly indicate CLIP when the measured peak reaches or exceeds 0 dBFS.
+
+### 7.5 Discoverability
 
 The help overlay MUST explain:
 - the product workflow;
@@ -146,14 +152,15 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 | Host automation attachments | Implemented | JUCE APVTS attachments |
 | Tooltips | Implemented in v1.1 | Product-specific help text |
 | Keyboard discoverability | Implemented in v1.1 | Space, Esc, R, G, H/F1 |
-| Reduced motion option | Planned | Visualizer animation currently always active |
+| Reduced motion option | Implemented in v1.2 | Decorative orbit/flash can be disabled |
 | State restore | Implemented | APVTS + source path/slot/lock |
 | Presets | Implemented | 10 factory presets |
 | A/B comparison | Planned | Useful future workflow feature |
 | Offline WAV export | Implemented | 24-bit stereo WAV |
 | Unsupported bus rejection | Implemented | Stereo output; disabled/mono/stereo input |
 | Automated unit tests | Planned | Add parameter/state/DSP regression target |
-| CI build matrix | Planned | Windows/macOS validation recommended |
+| Output peak/clip metering | Implemented in v1.2 | Stereo post-processing peak in dBFS |
+| CI build matrix | Partial | Windows VST3/Standalone build gate added; macOS remains planned |
 | Accessibility audit | Planned | Focus order and reduced-motion pass remains |
 
 ## 12. Future usability work
@@ -161,8 +168,7 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 Prioritized follow-up items:
 1. A/B state comparison that snapshots parameter state without duplicating source media.
 2. User preset save/load with schema versioning and validation.
-3. Reduced-motion preference for constellation and waveform animation.
-4. Searchable preset browser and favorites.
-5. Resizable/scalable UI with a compact laptop layout.
-6. Dedicated output peak/clip meter with labeled signal point.
-7. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
+3. Searchable preset browser and favorites.
+4. Resizable/scalable UI with a compact laptop layout.
+5. macOS AU/Standalone CI validation.
+6. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
