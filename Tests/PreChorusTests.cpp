@@ -58,6 +58,26 @@ public:
             expectEquals ((int) p.param (IDs::voiceCount), 6);
             expect (p.recallCompareState (1));
             expectEquals ((int) p.param (IDs::voiceCount), 28);
+
+            juce::MemoryBlock saved;
+            p.getStateInformation (saved);
+            PreChorusProcessor restored;
+            restored.setStateInformation (saved.getData(), (int) saved.getSize());
+            expect (restored.recallCompareState (0));
+            expectEquals ((int) restored.param (IDs::voiceCount), 6);
+            expect (restored.recallCompareState (1));
+            expectEquals ((int) restored.param (IDs::voiceCount), 28);
+        }
+
+        beginTest ("factory preset search is case-insensitive and stable");
+        {
+            const auto shimmer = PreChorusProcessor::getMatchingFactoryPresetNames ("shimmer");
+            expectEquals (shimmer.size(), 1);
+            expectEquals (shimmer[0], juce::String ("Future Bass Shimmer"));
+
+            const auto vocal = PreChorusProcessor::getMatchingFactoryPresetNames ("VOCAL");
+            expect (vocal.contains ("Pop Vocal Double"));
+            expect (vocal.contains ("Lo-Fi Bedroom Vocal"));
         }
 
         beginTest ("user preset round-trip excludes source media and restores parameters");
