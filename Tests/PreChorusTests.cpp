@@ -57,6 +57,33 @@ public:
             file.deleteFile();
         }
 
+        beginTest ("repeated render publication remains playable and finite");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 128);
+            auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getNonexistentChildFile ("prechorus-publication", ".wav", false);
+
+            bool allFinite = true;
+            for (int pass = 0; pass < 8; ++pass)
+            {
+                p.setParam (IDs::air, 0.1f * (float) pass);
+                expect (p.exportWav (file));
+                p.triggerPreview();
+
+                juce::AudioBuffer<float> buffer (2, 128);
+                buffer.clear();
+                juce::MidiBuffer midi;
+                p.processBlock (buffer, midi);
+
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    for (int i = 0; i < buffer.getNumSamples(); ++i)
+                        allFinite = allFinite && std::isfinite (buffer.getSample (ch, i));
+            }
+            expect (allFinite);
+            file.deleteFile();
+        }
+
         beginTest ("host state round-trip restores parameters");
         {
             PreChorusProcessor a;
