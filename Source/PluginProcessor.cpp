@@ -11,7 +11,7 @@ namespace
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
     const int kSyncBars[]   = { 2, 4, 8, 16 }; // beats: 1/2 bar(2), 1 bar(4), 2 bars(8), 4 bars(16)
 
-    juce::ValueTree soundParameterState (const juce::AudioProcessorValueTreeState& state)
+    juce::ValueTree soundParameterState (juce::AudioProcessorValueTreeState& state)
     {
         auto copy = state.copyState().createCopy();
         for (const auto& key : { "file", "activeSlot", "captureLock", "compareA", "compareB", "currentCompareSlot" })
@@ -401,7 +401,7 @@ bool PreChorusProcessor::recallCompareState (int slot)
     return true;
 }
 
-bool PreChorusProcessor::saveUserPreset (const juce::File& file) const
+bool PreChorusProcessor::saveUserPreset (const juce::File& file)
 {
     if (file == juce::File()) return false;
 
