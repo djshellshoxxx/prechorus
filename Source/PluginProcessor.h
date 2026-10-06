@@ -165,6 +165,13 @@ public:
     void loadFactoryPreset (int index);
     static juce::StringArray getFactoryPresetNames();
 
+    // A/B compare and portable user presets (parameter state only; source audio is never embedded)
+    bool storeCompareState (int slot);
+    bool recallCompareState (int slot);
+    int getCurrentCompareSlot() const { return currentCompareSlot.load(); }
+    bool saveUserPreset (const juce::File& file) const;
+    bool loadUserPreset (const juce::File& file);
+
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }
     double getHostBpm() const { return hostBpm.load(); }
@@ -226,6 +233,8 @@ private:
     double lastRenderBpm = 0.0;
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
+    std::array<juce::ValueTree, 2> compareStates;
+    std::atomic<int> currentCompareSlot { 0 };
 
     std::array<Voice, 16> voices;
     juce::uint32 voiceCounter = 0;
