@@ -855,7 +855,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
         proc.setCaptureLock (! proc.isCaptureLocked());
     };
 
-    captureCombo.addItemList (juce::StringArray { "Threshold", "1/16 Note", "1/8 Note", "1/4 Beat", "1/2 Note", "1 Bar", "2 Bars", "Manual" }, 1);
+    captureCombo.addItemList (juce::StringArray { "Threshold", "1/16 Note", "1/8 Note", "1/4 Note", "1/2 Note", "1 Bar", "2 Bars", "Manual" }, 1);
     addAndMakeVisible (captureCombo);
     captureComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::captureMode, captureCombo);
 
