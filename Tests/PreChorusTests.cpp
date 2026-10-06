@@ -180,14 +180,28 @@ public:
         {
             PreChorusProcessor p;
             p.setParam (IDs::voiceCount, 6.0f);
+            p.setParam (IDs::sourceMode, 2.0f);
+            p.setParam (IDs::captureMode, 7.0f);
+            p.setParam (IDs::captureSlot, 4.0f);
+            p.setParam (IDs::captureLock, 1.0f);
             expect (p.storeCompareState (0));
             p.setParam (IDs::voiceCount, 28.0f);
             expect (p.storeCompareState (1));
 
+            p.setParam (IDs::sourceMode, 0.0f);
+            p.setParam (IDs::captureMode, 0.0f);
+            p.setParam (IDs::captureSlot, 1.0f);
+            p.setParam (IDs::captureLock, 0.0f);
             expect (p.recallCompareState (0));
             expectEquals ((int) p.param (IDs::voiceCount), 6);
+            expectEquals ((int) p.param (IDs::sourceMode), 0);
+            expectEquals ((int) p.param (IDs::captureMode), 0);
+            expectEquals ((int) p.param (IDs::captureSlot), 1);
+            expectEquals ((int) p.param (IDs::captureLock), 0);
             expect (p.recallCompareState (1));
             expectEquals ((int) p.param (IDs::voiceCount), 28);
+            expectEquals ((int) p.param (IDs::sourceMode), 0);
+            expectEquals ((int) p.param (IDs::captureSlot), 1);
 
             juce::MemoryBlock saved;
             p.getStateInformation (saved);
@@ -215,6 +229,10 @@ public:
             PreChorusProcessor p;
             p.setParam (IDs::pitchSpread, 13.0f);
             p.setParam (IDs::space, 0.61f);
+            p.setParam (IDs::sourceMode, 0.0f);
+            p.setParam (IDs::captureMode, 7.0f);
+            p.setParam (IDs::captureSlot, 4.0f);
+            p.setParam (IDs::captureLock, 1.0f);
 
             auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
                             .getNonexistentChildFile ("prechorus-test", ".pchpreset", false);
@@ -231,9 +249,17 @@ public:
 
             p.setParam (IDs::pitchSpread, 1.0f);
             p.setParam (IDs::space, 0.05f);
+            p.setParam (IDs::sourceMode, 2.0f);
+            p.setParam (IDs::captureMode, 0.0f);
+            p.setParam (IDs::captureSlot, 2.0f);
+            p.setParam (IDs::captureLock, 0.0f);
             expect (p.loadUserPreset (file));
             expectWithinAbsoluteError (p.param (IDs::pitchSpread), 13.0f, 0.01f);
             expectWithinAbsoluteError (p.param (IDs::space), 0.61f, 0.011f);
+            expectEquals ((int) p.param (IDs::sourceMode), 2);
+            expectEquals ((int) p.param (IDs::captureMode), 0);
+            expectEquals ((int) p.param (IDs::captureSlot), 2);
+            expectEquals ((int) p.param (IDs::captureLock), 0);
             file.deleteFile();
         }
 

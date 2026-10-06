@@ -11,12 +11,48 @@ namespace
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
     const int kSyncBars[]   = { 2, 4, 8, 16 }; // beats: 1/2 bar(2), 1 bar(4), 2 bars(8), 4 bars(16)
 
-    juce::ValueTree soundParameterState (juce::AudioProcessorValueTreeState& state)
+    juce::ValueTree soundParameterState (juce::ValueTree copy)
     {
-        auto copy = state.copyState().createCopy();
         for (const auto& key : { "file", "activeSlot", "captureLock", "compareA", "compareB", "currentCompareSlot" })
             copy.removeProperty (key, nullptr);
+
+        // Source selection and capture workflow are session state, not part of a sound snapshot.
+        const juce::StringArray nonSoundParameterIds {
+            IDs::sourceMode, IDs::captureMode, IDs::thresh, IDs::captureSlot, IDs::captureLock
+        };
+        for (int i = copy.getNumChildren() - 1; i >= 0; --i)
+        {
+            const auto id = copy.getChild (i).getProperty ("id").toString();
+            if (nonSoundParameterIds.contains (id))
+                copy.removeChild (i, nullptr);
+        }
         return copy;
+    }
+
+    juce::ValueTree soundParameterState (juce::AudioProcessorValueTreeState& state)
+    {
+        return soundParameterState (state.copyState().createCopy());
+    }
+
+    void applySoundParameterState (juce::AudioProcessorValueTreeState& apvts,
+                                   const juce::ValueTree& soundState)
+    {
+        const juce::StringArray nonSoundParameterIds {
+            IDs::sourceMode, IDs::captureMode, IDs::thresh, IDs::captureSlot, IDs::captureLock
+        };
+        auto merged = apvts.copyState();
+        for (int i = 0; i < soundState.getNumChildren(); ++i)
+        {
+            const auto source = soundState.getChild (i);
+            const auto id = source.getProperty ("id");
+            if (id.isVoid() || nonSoundParameterIds.contains (id.toString()))
+                continue;
+
+            auto target = merged.getChildWithProperty ("id", id);
+            if (target.isValid() && source.hasProperty ("value"))
+                target.setProperty ("value", source.getProperty ("value"), nullptr);
+        }
+        apvts.replaceState (merged);
     }
 
     float quantizeToScale (float semi, int scaleMode)
@@ -400,7 +436,7 @@ bool PreChorusProcessor::recallCompareState (int slot)
     if (slot < 0 || slot > 1) return false;
     auto state = compareStates[(size_t) slot];
     if (! state.isValid()) return false;
-    apvts.replaceState (state.createCopy());
+    applySoundParameterState (apvts, state);
     currentCompareSlot.store (slot);
     dirty = true;
     return true;
@@ -440,7 +476,7 @@ bool PreChorusProcessor::loadUserPreset (const juce::File& file)
     if (! state.isValid() || state.getType() != apvts.state.getType())
         return false;
 
-    apvts.replaceState (state.createCopy());
+    applySoundParameterState (apvts, soundParameterState (state));
     dirty = true;
     return true;
 }
