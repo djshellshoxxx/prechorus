@@ -178,6 +178,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     return { p.begin(), p.end() };
 }
 
+double PreChorusProcessor::getTailLengthSeconds() const
+{
+    auto current = getRendered();
+    if (current == nullptr || current->sampleRate <= 0.0)
+        return 0.0;
+    return (double) current->audio.getNumSamples() / current->sampleRate;
+}
+
 bool PreChorusProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto& out = layouts.getMainOutputChannelSet();
