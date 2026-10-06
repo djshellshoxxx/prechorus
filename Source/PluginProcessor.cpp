@@ -11,6 +11,14 @@ namespace
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
     const int kSyncBars[]   = { 2, 4, 8, 16 }; // beats: 1/2 bar(2), 1 bar(4), 2 bars(8), 4 bars(16)
 
+    juce::ValueTree soundParameterState (const juce::AudioProcessorValueTreeState& state)
+    {
+        auto copy = state.copyState().createCopy();
+        for (const auto& key : { "file", "activeSlot", "captureLock", "compareA", "compareB", "currentCompareSlot" })
+            copy.removeProperty (key, nullptr);
+        return copy;
+    }
+
     float quantizeToScale (float semi, int scaleMode)
     {
         if (scaleMode == 0) return semi; // Chromatic
@@ -72,6 +80,9 @@ PreChorusProcessor::PreChorusProcessor()
     captureSlots[0].makeCopyOf (loadedBuffer);
     captureSlotSRs[0] = loadedSR;
     captureSlotFilled[0] = true;
+
+    compareStates[0] = soundParameterState (apvts);
+    compareStates[1] = soundParameterState (apvts);
 
     startTimerHz (30);
     dirty = true;
@@ -361,7 +372,7 @@ void PreChorusProcessor::loadFactoryPreset (int index)
 bool PreChorusProcessor::storeCompareState (int slot)
 {
     if (slot < 0 || slot > 1) return false;
-    compareStates[(size_t) slot] = apvts.copyState().createCopy();
+    compareStates[(size_t) slot] = soundParameterState (apvts);
     currentCompareSlot.store (slot);
     return compareStates[(size_t) slot].isValid();
 }
@@ -384,7 +395,7 @@ bool PreChorusProcessor::saveUserPreset (const juce::File& file) const
     juce::ValueTree wrapper ("PRECHORUS_PRESET");
     wrapper.setProperty ("schemaVersion", 1, nullptr);
     wrapper.setProperty ("product", "PreChorus", nullptr);
-    wrapper.addChild (apvts.copyState(), -1, nullptr);
+    wrapper.addChild (soundParameterState (apvts), -1, nullptr);
 
     auto xml = wrapper.createXml();
     if (xml == nullptr) return false;
@@ -1442,6 +1453,15 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("activeSlot", activeSlot.load(), nullptr);
     state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    state.setProperty ("currentCompareSlot", currentCompareSlot.load(), nullptr);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        if (compareStates[(size_t) i].isValid())
+            if (auto xml = compareStates[(size_t) i].createXml())
+                state.setProperty (i == 0 ? "compareA" : "compareB", xml->toString(), nullptr);
+    }
+
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1456,6 +1476,21 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
         if (f.existsAsFile()) loadSampleFile (f);
         activeSlot.store (state.getProperty ("activeSlot", 0));
         captureLockState.store (state.getProperty ("captureLock", false));
+        currentCompareSlot.store (juce::jlimit (0, 1, (int) state.getProperty ("currentCompareSlot", 0)));
+
+        for (int i = 0; i < 2; ++i)
+        {
+            const auto text = state.getProperty (i == 0 ? "compareA" : "compareB", "").toString();
+            if (text.isNotEmpty())
+            {
+                if (auto compareXml = juce::XmlDocument::parse (text))
+                {
+                    auto compareState = juce::ValueTree::fromXml (*compareXml);
+                    if (compareState.isValid() && compareState.getType() == apvts.state.getType())
+                        compareStates[(size_t) i] = compareState;
+                }
+            }
+        }
         dirty = true;
     }
 }
