@@ -85,6 +85,10 @@
 - **Keyboard Workflow**: Space previews, Esc stops, R randomizes sound-design controls, G regenerates the deterministic seed, and H/F1 opens help.
 - **Action Status Bar**: Loading, export, preview, preset, reset, randomize, and regeneration actions report success/state without interrupting audio.
 - **Control Tooltips**: Primary buttons, selectors, toggles, and rotary controls provide inline usage guidance.
+- **A/B Compare**: Store and recall two independent parameter states without touching loaded/captured source audio.
+- **User Presets**: Save/load validated, versioned `.pchpreset` files containing sound parameters only.
+- **Preset Search**: Filter factory presets by name directly in the header.
+- **Resizable UI**: Scales from a compact 1100×740 layout up to 1800×1200.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
 
 ---
