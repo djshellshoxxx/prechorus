@@ -180,10 +180,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
 
 double PreChorusProcessor::getTailLengthSeconds() const
 {
-    auto current = getRendered();
-    if (current == nullptr || current->sampleRate <= 0.0)
-        return 0.0;
-    return (double) current->audio.getNumSamples() / current->sampleRate;
+    return reportedTailSeconds.load();
 }
 
 bool PreChorusProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -473,12 +470,15 @@ void PreChorusProcessor::setCaptureLock (bool locked)
 
 std::shared_ptr<const RenderedSample> PreChorusProcessor::getRendered() const
 {
-    juce::SpinLock::ScopedLockType l (renderLock);
+    const juce::ScopedLock l (renderedOwnerLock);
     return rendered;
 }
 
 void PreChorusProcessor::timerCallback()
 {
+    if (realtimeReaders.load (std::memory_order_acquire) == 0 && ! retiredRendered.empty())
+        retiredRendered.clear();
+
     if (param (IDs::sync) > 0.5f)
     {
         const double bpm = hostBpm.load();
@@ -1154,10 +1154,25 @@ void PreChorusProcessor::render()
     out->hitIndex = hitOut;
 
     const int latency = out->hitIndex > 0 ? out->hitIndex : 0;
+
+    std::shared_ptr<RenderedSample> previous;
     {
-        juce::SpinLock::ScopedLockType l (renderLock);
+        const juce::ScopedLock l (renderedOwnerLock);
+        previous = std::move (rendered);
         rendered = out;
     }
+
+    if (previous != nullptr)
+        retiredRendered.push_back (std::move (previous));
+
+    realtimeRendered.store (out.get(), std::memory_order_release);
+    reportedTailSeconds.store (out->sampleRate > 0.0
+                                   ? (double) out->audio.getNumSamples() / out->sampleRate
+                                   : 0.0);
+
+    if (realtimeReaders.load (std::memory_order_acquire) == 0)
+        retiredRendered.clear();
+
     setLatencySamples (param (IDs::align) > 0.5f ? latency : 0);
 }
 
@@ -1313,8 +1328,13 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         else if (m.isAllNotesOff()) for (auto& v : voices) v.active = false;
     }
 
-    auto r = getRendered();
-    if (r == nullptr || r->audio.getNumSamples() == 0) return;
+    realtimeReaders.fetch_add (1, std::memory_order_acq_rel);
+    const auto* r = realtimeRendered.load (std::memory_order_acquire);
+    if (r == nullptr || r->audio.getNumSamples() == 0)
+    {
+        realtimeReaders.fetch_sub (1, std::memory_order_release);
+        return;
+    }
 
     const float dryLvl = dryParam != nullptr ? dryParam->load() : 1.0f;
     const float wetLvl = wetParam != nullptr ? wetParam->load() : 1.0f;
@@ -1336,6 +1356,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, numSamples));
     outputMeter.store (peak);
+    realtimeReaders.fetch_sub (1, std::memory_order_release);
 }
 
 void PreChorusProcessor::startVoice (float gain)
