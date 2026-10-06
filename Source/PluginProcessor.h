@@ -164,6 +164,7 @@ public:
     void regenerateSeed();
     void loadFactoryPreset (int index);
     static juce::StringArray getFactoryPresetNames();
+    static juce::StringArray getMatchingFactoryPresetNames (const juce::String& filter);
 
     // A/B compare and portable user presets (parameter state only; source audio is never embedded)
     bool storeCompareState (int slot);
