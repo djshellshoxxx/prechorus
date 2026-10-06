@@ -476,6 +476,8 @@ std::shared_ptr<const RenderedSample> PreChorusProcessor::getRendered() const
 
 void PreChorusProcessor::timerCallback()
 {
+    serviceDeferredStateRestore();
+
     if (captureState.load() == CaptureState::done)
         finalizePendingCapture();
 
@@ -1531,6 +1533,19 @@ bool PreChorusProcessor::exportWav (const juce::File& dest)
     return true;
 }
 
+void PreChorusProcessor::serviceDeferredStateRestore()
+{
+    auto pending = std::atomic_exchange_explicit (&pendingStateFile,
+                                                  std::shared_ptr<juce::File> {},
+                                                  std::memory_order_acq_rel);
+    if (pending == nullptr)
+        return;
+
+    const int sourceMode = pendingStateSourceMode.load (std::memory_order_acquire);
+    if (pending->existsAsFile() && loadSampleFile (*pending))
+        setParam (IDs::sourceMode, (float) sourceMode);
+}
+
 void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -1557,12 +1572,18 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
         if (! state.isValid()) return;
         apvts.replaceState (state);
         const int restoredSourceMode = (int) param (IDs::sourceMode);
-        juce::File f (state.getProperty ("file", "").toString());
-        if (f.existsAsFile())
-        {
-            loadSampleFile (f);
-            setParam (IDs::sourceMode, (float) restoredSourceMode);
-        }
+        pendingStateSourceMode.store (restoredSourceMode, std::memory_order_release);
+
+        const auto filePath = state.getProperty ("file", "").toString();
+        if (filePath.isNotEmpty())
+            std::atomic_store_explicit (&pendingStateFile,
+                                        std::make_shared<juce::File> (filePath),
+                                        std::memory_order_release);
+        else
+            std::atomic_store_explicit (&pendingStateFile,
+                                        std::shared_ptr<juce::File> {},
+                                        std::memory_order_release);
+
         activeSlot.store (state.getProperty ("activeSlot", 0));
         captureLockState.store (state.getProperty ("captureLock", false));
         currentCompareSlot.store (juce::jlimit (0, 1, (int) state.getProperty ("currentCompareSlot", 0)));
