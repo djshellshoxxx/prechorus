@@ -189,6 +189,7 @@ private:
     void refreshFolderList (const juce::File& f);
     void requestCaptureFinalizeRealtime();
     void finalizePendingCapture();
+    void serviceDeferredStateRestore();
 
     struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain);
@@ -241,6 +242,8 @@ private:
     double lastRenderBpm = 0.0;
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
+    std::shared_ptr<juce::File> pendingStateFile;
+    std::atomic<int> pendingStateSourceMode { 0 };
     std::array<juce::ValueTree, 2> compareStates;
     std::atomic<int> currentCompareSlot { 0 };
 
@@ -249,5 +252,6 @@ private:
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
 
+    friend class PreChorusCoreTests;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreChorusProcessor)
 };
