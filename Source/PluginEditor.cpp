@@ -156,11 +156,11 @@ void PCLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& labe
 
 void VoiceOrbitVisualizer::timerCallback()
 {
-    phase += 0.025f;
+    if (! reducedMotion) phase += 0.025f;
     const float lvl = proc.getOutputLevel();
-    if (lvl - smoothedOut > 0.12f) flashRing = 1.0f;
+    if (! reducedMotion && lvl - smoothedOut > 0.12f) flashRing = 1.0f;
     smoothedOut += (lvl - smoothedOut) * 0.35f;
-    flashRing *= 0.88f;
+    flashRing = reducedMotion ? 0.0f : flashRing * 0.88f;
     repaint();
 }
 
@@ -375,6 +375,19 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
     g.setColour (PCColours::outline.withAlpha (0.3f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
+
+    const float outputPeak = proc.getOutputLevel();
+    if (outputPeak >= 1.0f)
+    {
+        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
+    }
+    else
+    {
+        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
+        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
+    }
 
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     g.setColour (col.withAlpha (0.85f));
@@ -653,6 +666,13 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
 
+    outputLabel.setText ("OUT -inf dBFS", juce::dontSendNotification);
+    outputLabel.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+    outputLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    outputLabel.setJustificationType (juce::Justification::centredRight);
+    outputLabel.setTooltip ("Peak output level after PreChorus processing. CLIP appears at or above 0 dBFS.");
+    addAndMakeVisible (outputLabel);
+
     addAndMakeVisible (prevButton);
     addAndMakeVisible (nextButton);
     addAndMakeVisible (loadButton);
@@ -786,6 +806,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (revConvergeToggle);
     addAndMakeVisible (alignToggle);
     addAndMakeVisible (syncToggle);
+    addAndMakeVisible (reducedMotionToggle);
+    reducedMotionToggle.onClick = [this] {
+        visualizer.setReducedMotion (reducedMotionToggle.getToggleState());
+        setStatus (reducedMotionToggle.getToggleState() ? "Reduced motion enabled." : "Reduced motion disabled.");
+    };
 
     syncCombo.addItemList (juce::StringArray { "1/2 Bar", "1 Bar", "2 Bars", "4 Bars" }, 1);
     addAndMakeVisible (syncCombo);
@@ -886,6 +911,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     syncToggle.setTooltip ("Use host tempo divisions for the swell length.");
     syncCombo.setTooltip ("Select the tempo-synced swell duration.");
     rangeCombo.setTooltip ("Set the maximum pitch sweep range.");
+    reducedMotionToggle.setTooltip ("Stops decorative orbit and transient-flash animation while retaining the audio meters and functional waveform updates.");
 
     addChildComponent (help);
     setSize (1240, 840);
@@ -1077,7 +1103,10 @@ void PreChorusEditor::resized()
     confidenceLabel.setBounds (capStrip.removeFromRight (170));
 
     area.removeFromTop (3);
-    statusLabel.setBounds (area.removeFromTop (18));
+    auto statusRow = area.removeFromTop (18);
+    reducedMotionToggle.setBounds (statusRow.removeFromRight (118));
+    outputLabel.setBounds (statusRow.removeFromRight (118));
+    statusLabel.setBounds (statusRow);
 
     // 3. Visualizers Row (32-Voice Constellation + Interactive Waveform)
     area.removeFromTop (6);
