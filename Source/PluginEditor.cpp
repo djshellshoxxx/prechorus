@@ -389,6 +389,10 @@ void WaveformDisplay::paint (juce::Graphics& g)
         outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
     }
 
+    const int compareSlot = proc.getCurrentCompareSlot();
+    recallAButton.setColour (juce::TextButton::buttonColourId, compareSlot == 0 ? PCColours::accent : PCColours::panel2);
+    recallBButton.setColour (juce::TextButton::buttonColourId, compareSlot == 1 ? PCColours::accent : PCColours::panel2);
+
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     g.setColour (col.withAlpha (0.85f));
     g.fillPath (swellPath);
@@ -579,10 +583,14 @@ HelpOverlay::HelpOverlay()
         "• R: randomize sound-design parameters.\n"
         "• G: regenerate the deterministic swarm seed.\n"
         "• H / F1: open this help panel.\n\n"
-        "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
-        "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
-        "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
-        "Vocal Stutter). Presets only touch swarm/tone/convergence knobs, never your loaded audio.\n\n"
+        "FACTORY PRESETS: Type in SEARCH PRESETS to filter the factory list by name. Factory presets "
+        "only touch swarm/tone/convergence parameters, never your loaded audio.\n\n"
+        "A/B COMPARE: STORE A or STORE B captures the current parameter state. A and B recall those "
+        "states without replacing loaded/captured source audio, and both snapshots are saved with the host project.\n\n"
+        "USER PRESETS: SAVE PRESET writes a versioned .pchpreset parameter file. LOAD PRESET validates "
+        "the file before applying it. Source audio, capture history, and A/B metadata are not embedded.\n\n"
+        "DISPLAY: REDUCED MOTION stops decorative orbit and transient-flash animation. The OUT meter "
+        "continues to show post-processing stereo peak level in dBFS and marks 0 dBFS+ as CLIP.\n\n"
         "CHARACTER MODES:\n"
         "• Clean Digital: Pristine transparent sinc/linear interpolation.\n"
         "• Analog Ensemble: Warm saturation, gentle drift, bandwidth contouring.\n"
