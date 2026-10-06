@@ -427,7 +427,8 @@ bool PreChorusProcessor::loadUserPreset (const juce::File& file)
         return false;
 
     const int version = (int) wrapper.getProperty ("schemaVersion", 0);
-    if (version != 1 || wrapper.getNumChildren() != 1)
+    const auto product = wrapper.getProperty ("product", "").toString();
+    if (version != 1 || product != "PreChorus" || wrapper.getNumChildren() != 1)
         return false;
 
     auto state = wrapper.getChild (0);
