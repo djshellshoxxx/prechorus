@@ -82,7 +82,9 @@
 - **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
 - **MIDI Triggered**: Any MIDI note-on received by the plugin fires the swarm (velocity-sensitive), so a DAW MIDI track can trigger the drop exactly on the beat.
 - **Drag-and-Drop Loading**: Drop a WAV/AIFF/FLAC/MP3/OGG file straight onto the plugin window to load it as the source.
-- **Spacebar Preview**: Press Space anywhere in the plugin window to trigger playback, same as the PLAY button.
+- **Keyboard Workflow**: Space previews, Esc stops, R randomizes sound-design controls, G regenerates the deterministic seed, and H/F1 opens help.
+- **Action Status Bar**: Loading, export, preview, preset, reset, randomize, and regeneration actions report success/state without interrupting audio.
+- **Control Tooltips**: Primary buttons, selectors, toggles, and rotary controls provide inline usage guidance.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
 
 ---
@@ -104,6 +106,8 @@ cmake --build build --config Release
 ## License
 MIT
 
-## Required shared plug-in standard
+## Specifications
 
-This project follows the [Circuit Drift Labs Shared Audio Plugin Standard](docs/standards/CDL_PLUGIN_BASELINE.md). It is required for the plug-in target; standalone-only requirements apply only when a standalone target is included. The product-specific specification supplements the shared standard and records the applicable profiles, compliance status, and any exceptions.
+The product-specific source of truth is [docs/PRECHORUS_SPEC.md](docs/PRECHORUS_SPEC.md).
+
+This project also follows the [Circuit Drift Labs Shared Audio Plugin Standard](docs/standards/CDL_PLUGIN_BASELINE.md). The product specification supplements the shared standard and records profiles, compliance status, product-specific behavior, and planned work.
