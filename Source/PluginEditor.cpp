@@ -663,8 +663,18 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (regenSeedButton);
     addAndMakeVisible (helpButton);
 
-    prevButton.onClick = [this] { proc.prevSample(); waveform.rebuild(); setStatus ("Previous source loaded."); };
-    nextButton.onClick = [this] { proc.nextSample(); waveform.rebuild(); setStatus ("Next source loaded."); };
+    prevButton.onClick = [this] {
+        proc.prevSample();
+        waveform.rebuild();
+        const auto file = proc.getCurrentFile();
+        setStatus (file.existsAsFile() ? "Source: " + file.getFileName() : "No previous source is available.");
+    };
+    nextButton.onClick = [this] {
+        proc.nextSample();
+        waveform.rebuild();
+        const auto file = proc.getCurrentFile();
+        setStatus (file.existsAsFile() ? "Source: " + file.getFileName() : "No next source is available.");
+    };
     loadButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Load Vocal or Sample Stem", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -907,7 +917,11 @@ PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const 
     addAndMakeVisible (k->label);
 
     if (auto* parameter = proc.apvts.getParameter (id))
-        s.setTooltip (parameter->getName (64) + ". Double-click the value/control to return to its default.");
+    {
+        s.setDoubleClickReturnValue (true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+        s.setTooltip ("Adjust " + parameter->getName (64)
+                      + " in the current swarm sound. Double-click to return to its documented default.");
+    }
     k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, s);
     knobs.push_back (std::move (k));
     return *knobs.back();
