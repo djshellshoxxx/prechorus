@@ -376,23 +376,6 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (PCColours::outline.withAlpha (0.3f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
 
-    const float outputPeak = proc.getOutputLevel();
-    if (outputPeak >= 1.0f)
-    {
-        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
-        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
-    }
-    else
-    {
-        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
-        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
-        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
-    }
-
-    const int compareSlot = proc.getCurrentCompareSlot();
-    recallAButton.setColour (juce::TextButton::buttonColourId, compareSlot == 0 ? PCColours::accent : PCColours::panel2);
-    recallBButton.setColour (juce::TextButton::buttonColourId, compareSlot == 1 ? PCColours::accent : PCColours::panel2);
-
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     g.setColour (col.withAlpha (0.85f));
     g.fillPath (swellPath);
@@ -1099,6 +1082,24 @@ void PreChorusEditor::timerCallback()
             k->slider.repaint();
         }
     }
+
+    
+    const float outputPeak = proc.getOutputLevel();
+    if (outputPeak >= 1.0f)
+    {
+        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
+    }
+    else
+    {
+        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
+        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
+    }
+
+    const int compareSlot = proc.getCurrentCompareSlot();
+    recallAButton.setColour (juce::TextButton::buttonColourId, compareSlot == 0 ? PCColours::accent : PCColours::panel2);
+    recallBButton.setColour (juce::TextButton::buttonColourId, compareSlot == 1 ? PCColours::accent : PCColours::panel2);
 }
 
 void PreChorusEditor::applyTooltipSetting()
