@@ -1240,7 +1240,10 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         if (v.pos >= r->audio.getNumSamples()) v.active = false;
     }
     playhead.store (activePos);
-    outputMeter.store (buffer.getMagnitude (0, numSamples));
+    float peak = 0.0f;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, numSamples));
+    outputMeter.store (peak);
 }
 
 void PreChorusProcessor::startVoice (float gain)

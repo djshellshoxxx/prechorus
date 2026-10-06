@@ -156,11 +156,11 @@ void PCLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& labe
 
 void VoiceOrbitVisualizer::timerCallback()
 {
-    phase += 0.025f;
+    if (! reducedMotion) phase += 0.025f;
     const float lvl = proc.getOutputLevel();
-    if (lvl - smoothedOut > 0.12f) flashRing = 1.0f;
+    if (! reducedMotion && lvl - smoothedOut > 0.12f) flashRing = 1.0f;
     smoothedOut += (lvl - smoothedOut) * 0.35f;
-    flashRing *= 0.88f;
+    flashRing = reducedMotion ? 0.0f : flashRing * 0.88f;
     repaint();
 }
 
@@ -376,6 +376,19 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (PCColours::outline.withAlpha (0.3f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
 
+    const float outputPeak = proc.getOutputLevel();
+    if (outputPeak >= 1.0f)
+    {
+        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
+    }
+    else
+    {
+        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
+        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
+    }
+
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     g.setColour (col.withAlpha (0.85f));
     g.fillPath (swellPath);
@@ -557,6 +570,15 @@ HelpOverlay::HelpOverlay()
         "PRECHORUS - Complete 32-Voice Swarm & Convergence Engine\n\n"
         "The Signature Sound: A cloud of related voices becoming progressively more recognizable "
         "and coherent until they meet the original drop or event.\n\n"
+        "QUICK WORKFLOW:\n"
+        "1. LOAD or capture a source.  2. Pick a factory preset or character.  3. Shape swarm/convergence.\n"
+        "4. Press Space/PLAY to audition.  5. EXPORT WAV or drag the rendered result to your DAW.\n\n"
+        "KEYBOARD SHORTCUTS:\n"
+        "• Space: preview the current swarm.\n"
+        "• Esc: stop active preview voices.\n"
+        "• R: randomize sound-design parameters.\n"
+        "• G: regenerate the deterministic swarm seed.\n"
+        "• H / F1: open this help panel.\n\n"
         "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
         "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
         "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
@@ -603,7 +625,7 @@ void HelpOverlay::resized()
 // ---------------- PreChorus Editor ----------------
 
 PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), visualizer (p), dragPad (p),
+    : AudioProcessorEditor (&p), proc (p), tooltipWindow (this, 650), waveform (p), visualizer (p), dragPad (p),
       pitchTension (p, IDs::pitchTension)
 {
     setLookAndFeel (&lnf);
@@ -638,6 +660,19 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     confidenceLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (confidenceLabel);
 
+    statusLabel.setText ("Ready. Space: preview | Esc: stop | R: random | G: regen | H/F1: help", juce::dontSendNotification);
+    statusLabel.setFont (juce::Font (juce::FontOptions (9.0f)));
+    statusLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    statusLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (statusLabel);
+
+    outputLabel.setText ("OUT -inf dBFS", juce::dontSendNotification);
+    outputLabel.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+    outputLabel.setColour (juce::Label::textColourId, PCColours::textDim);
+    outputLabel.setJustificationType (juce::Justification::centredRight);
+    outputLabel.setTooltip ("Peak output level after PreChorus processing. CLIP appears at or above 0 dBFS.");
+    addAndMakeVisible (outputLabel);
+
     addAndMakeVisible (prevButton);
     addAndMakeVisible (nextButton);
     addAndMakeVisible (loadButton);
@@ -648,28 +683,48 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (regenSeedButton);
     addAndMakeVisible (helpButton);
 
-    prevButton.onClick = [this] { proc.prevSample(); waveform.rebuild(); };
-    nextButton.onClick = [this] { proc.nextSample(); waveform.rebuild(); };
+    prevButton.onClick = [this] {
+        proc.prevSample();
+        waveform.rebuild();
+        const auto file = proc.getCurrentFile();
+        setStatus (file.existsAsFile() ? "Source: " + file.getFileName() : "No previous source is available.");
+    };
+    nextButton.onClick = [this] {
+        proc.nextSample();
+        waveform.rebuild();
+        const auto file = proc.getCurrentFile();
+        setStatus (file.existsAsFile() ? "Source: " + file.getFileName() : "No next source is available.");
+    };
     loadButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Load Vocal or Sample Stem", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc) {
                 auto f = fc.getResult();
-                if (f.existsAsFile()) { proc.loadSampleFile (f, true); waveform.rebuild(); }
+                if (f.existsAsFile())
+                {
+                    const bool ok = proc.loadSampleFile (f, true);
+                    waveform.rebuild();
+                    setStatus (ok ? "Loaded: " + f.getFileName() : "Could not load selected audio file.");
+                }
             });
     };
-    playButton.onClick      = [this] { proc.triggerPreview(); };
-    resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); };
-    randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); };
-    regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); };
-    helpButton.onClick      = [this] { help.setVisible (true); };
+    playButton.onClick      = [this] { proc.triggerPreview(); setStatus ("Preview triggered."); };
+    resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); setStatus ("Sound-design edits reset."); };
+    randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); setStatus ("Sound-design parameters randomized."); };
+    regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); setStatus ("Deterministic swarm seed regenerated."); };
+    helpButton.onClick      = [this] { help.setVisible (true); setStatus ("Help opened."); };
 
     exportButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
             [this] (const juce::FileChooser& fc) {
                 auto f = fc.getResult();
-                if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav"));
+                if (f != juce::File())
+                {
+                    const auto out = f.withFileExtension ("wav");
+                    const bool ok = proc.exportWav (out);
+                    setStatus (ok ? "Exported: " + out.getFileName() : "WAV export failed.");
+                }
             });
     };
 
@@ -703,7 +758,12 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (presetCombo);
     presetCombo.onChange = [this] {
         const int idx = presetCombo.getSelectedItemIndex();
-        if (idx >= 0) { proc.loadFactoryPreset (idx); waveform.rebuild(); }
+        if (idx >= 0)
+        {
+            proc.loadFactoryPreset (idx);
+            waveform.rebuild();
+            setStatus ("Preset: " + presetCombo.getText());
+        }
     };
 
     // Live Capture Controls & History
@@ -746,6 +806,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (revConvergeToggle);
     addAndMakeVisible (alignToggle);
     addAndMakeVisible (syncToggle);
+    addAndMakeVisible (reducedMotionToggle);
+    reducedMotionToggle.onClick = [this] {
+        visualizer.setReducedMotion (reducedMotionToggle.getToggleState());
+        setStatus (reducedMotionToggle.getToggleState() ? "Reduced motion enabled." : "Reduced motion disabled.");
+    };
 
     syncCombo.addItemList (juce::StringArray { "1/2 Bar", "1 Bar", "2 Bars", "4 Bars" }, 1);
     addAndMakeVisible (syncCombo);
@@ -820,6 +885,34 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kMacro->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
     kDistance->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
 
+    prevButton.setTooltip ("Load the previous supported audio file in the current folder.");
+    nextButton.setTooltip ("Load the next supported audio file in the current folder.");
+    loadButton.setTooltip ("Load a WAV, AIFF, FLAC, MP3, or OGG source. Loading switches Live Capture to Loaded Sample.");
+    playButton.setTooltip ("Trigger the current rendered swarm preview. Shortcut: Space.");
+    exportButton.setTooltip ("Export the current rendered result as a stereo 24-bit WAV.");
+    resetButton.setTooltip ("Reset the main sound-design edits without replacing the loaded or captured source.");
+    randomButton.setTooltip ("Randomize musical sound-design parameters while preserving the source. Shortcut: R.");
+    regenSeedButton.setTooltip ("Generate a new deterministic swarm seed without changing the other controls. Shortcut: G.");
+    helpButton.setTooltip ("Open workflow and control help. Shortcut: H or F1.");
+    armButton.setTooltip ("Arm live capture. Click again to cancel the armed state.");
+    captureButton.setTooltip ("Start or stop manual live capture for the active history slot.");
+    lockButton.setTooltip ("Protect the active capture slot from accidental overwrite.");
+    sourceModeCombo.setTooltip ("Choose whether the swarm uses live capture, a loaded file, both, or scattered slices.");
+    captureCombo.setTooltip ("Choose threshold, tempo-length, or manual live capture behavior.");
+    scaleCombo.setTooltip ("Constrain scattered pitch offsets to the selected musical scale.");
+    dirCombo.setTooltip ("Choose forward, reverse, alternating, or deterministic-random voice playback direction.");
+    postReleaseCombo.setTooltip ("Choose what the swarm does after the target impact.");
+    charCombo.setTooltip ("Choose the per-voice character/color model.");
+    seqCombo.setTooltip ("Restrict automatic target triggering to the selected beat/bar cycle.");
+    presetCombo.setTooltip ("Load a factory starting point without replacing the current source audio.");
+    freezeToggle.setTooltip ("Hold convergence at its current spread to create a sustained cloud.");
+    revConvergeToggle.setTooltip ("Invert the motion so voices move from coherent toward scattered.");
+    alignToggle.setTooltip ("Use host timing/latency alignment so the target lands on the intended note or downbeat.");
+    syncToggle.setTooltip ("Use host tempo divisions for the swell length.");
+    syncCombo.setTooltip ("Select the tempo-synced swell duration.");
+    rangeCombo.setTooltip ("Set the maximum pitch sweep range.");
+    reducedMotionToggle.setTooltip ("Stops decorative orbit and transient-flash animation while retaining the audio meters and functional waveform updates.");
+
     addChildComponent (help);
     setSize (1240, 840);
     setWantsKeyboardFocus (true);
@@ -849,6 +942,12 @@ PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const 
     k->label.setColour (juce::Label::textColourId, PCColours::textDim);
     addAndMakeVisible (k->label);
 
+    if (auto* parameter = proc.apvts.getParameter (id))
+    {
+        s.setDoubleClickReturnValue (true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
+        s.setTooltip ("Adjust " + parameter->getName (64)
+                      + " in the current swarm sound. Double-click to return to its documented default.");
+    }
     k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, s);
     knobs.push_back (std::move (k));
     return *knobs.back();
@@ -1003,6 +1102,12 @@ void PreChorusEditor::resized()
 
     confidenceLabel.setBounds (capStrip.removeFromRight (170));
 
+    area.removeFromTop (3);
+    auto statusRow = area.removeFromTop (18);
+    reducedMotionToggle.setBounds (statusRow.removeFromRight (118));
+    outputLabel.setBounds (statusRow.removeFromRight (118));
+    statusLabel.setBounds (statusRow);
+
     // 3. Visualizers Row (32-Voice Constellation + Interactive Waveform)
     area.removeFromTop (6);
     auto vis = area.removeFromTop (210);
@@ -1094,7 +1199,21 @@ bool PreChorusEditor::isInterestedInFileDrag (const juce::StringArray& files)
 void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
-        if (proc.loadSampleFile (juce::File (f), true)) return;
+    {
+        const juce::File file (f);
+        if (proc.loadSampleFile (file, true))
+        {
+            waveform.rebuild();
+            setStatus ("Loaded: " + file.getFileName());
+            return;
+        }
+    }
+    setStatus ("Dropped file could not be loaded.");
+}
+
+void PreChorusEditor::setStatus (const juce::String& text)
+{
+    statusLabel.setText (text, juce::dontSendNotification);
 }
 
 bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
@@ -1102,7 +1221,38 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::spaceKey)
     {
         proc.triggerPreview();
+        setStatus ("Preview triggered.");
         return true;
     }
+
+    if (key.getKeyCode() == juce::KeyPress::escapeKey)
+    {
+        proc.stopAll();
+        setStatus ("Preview stopped.");
+        return true;
+    }
+
+    const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+    if (ch == 'r')
+    {
+        proc.randomizePreChorus();
+        waveform.rebuild();
+        setStatus ("Sound-design parameters randomized.");
+        return true;
+    }
+    if (ch == 'g')
+    {
+        proc.regenerateSeed();
+        waveform.rebuild();
+        setStatus ("Deterministic swarm seed regenerated.");
+        return true;
+    }
+    if (ch == 'h' || key.getKeyCode() == juce::KeyPress::F1Key)
+    {
+        help.setVisible (true);
+        setStatus ("Help opened.");
+        return true;
+    }
+
     return false;
 }
