@@ -39,3 +39,24 @@ target_compile_definitions(PreChorus PUBLIC
 target_link_libraries(PreChorus
     PRIVATE juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+
+option(PRECHORUS_BUILD_TESTS "Build PreChorus regression tests" ON)
+if(PRECHORUS_BUILD_TESTS)
+    enable_testing()
+    juce_add_console_app(PreChorusTests PRODUCT_NAME "PreChorus Tests")
+    juce_generate_juce_header(PreChorusTests)
+    target_sources(PreChorusTests PRIVATE
+        Tests/PreChorusTests.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp)
+    target_compile_definitions(PreChorusTests PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(PreChorusTests
+        PRIVATE juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    add_test(NAME PreChorusCoreTests COMMAND PreChorusTests)
+endif()
