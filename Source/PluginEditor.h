@@ -147,15 +147,18 @@ private:
     Knob& makeKnob (const juce::String& id, const juce::String& text);
     void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
     void setStatus (const juce::String& text);
+    void applyTooltipSetting();
+    void showOptionsMenu();
 
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
-    juce::TooltipWindow tooltipWindow;
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+    bool tooltipsEnabled = true;
 
     juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel, outputLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
-                     regenSeedButton { "REGEN" }, helpButton { "?" };
+                     regenSeedButton { "REGEN" }, optionsButton { "OPTIONS" }, helpButton { "?" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
