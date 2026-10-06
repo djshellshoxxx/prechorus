@@ -104,7 +104,7 @@ cmake --build build --config Release
 ```
 
 ## License
-MIT
+PreChorus is currently distributed under the repository's proprietary license. See [LICENSE](LICENSE) and [COPYRIGHT-TRADEMARK.md](COPYRIGHT-TRADEMARK.md). Earlier versions that were published under MIT remain under the terms that accompanied those versions.
 
 ## Specifications
 
