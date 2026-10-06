@@ -358,6 +358,63 @@ void PreChorusProcessor::loadFactoryPreset (int index)
     regenerateSeed();
 }
 
+bool PreChorusProcessor::storeCompareState (int slot)
+{
+    if (slot < 0 || slot > 1) return false;
+    compareStates[(size_t) slot] = apvts.copyState().createCopy();
+    currentCompareSlot.store (slot);
+    return compareStates[(size_t) slot].isValid();
+}
+
+bool PreChorusProcessor::recallCompareState (int slot)
+{
+    if (slot < 0 || slot > 1) return false;
+    auto state = compareStates[(size_t) slot];
+    if (! state.isValid()) return false;
+    apvts.replaceState (state.createCopy());
+    currentCompareSlot.store (slot);
+    dirty = true;
+    return true;
+}
+
+bool PreChorusProcessor::saveUserPreset (const juce::File& file) const
+{
+    if (file == juce::File()) return false;
+
+    juce::ValueTree wrapper ("PRECHORUS_PRESET");
+    wrapper.setProperty ("schemaVersion", 1, nullptr);
+    wrapper.setProperty ("product", "PreChorus", nullptr);
+    wrapper.addChild (apvts.copyState(), -1, nullptr);
+
+    auto xml = wrapper.createXml();
+    if (xml == nullptr) return false;
+    return file.replaceWithText (xml->toString());
+}
+
+bool PreChorusProcessor::loadUserPreset (const juce::File& file)
+{
+    if (! file.existsAsFile()) return false;
+
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr) return false;
+
+    auto wrapper = juce::ValueTree::fromXml (*xml);
+    if (! wrapper.isValid() || wrapper.getType().toString() != "PRECHORUS_PRESET")
+        return false;
+
+    const int version = (int) wrapper.getProperty ("schemaVersion", 0);
+    if (version != 1 || wrapper.getNumChildren() != 1)
+        return false;
+
+    auto state = wrapper.getChild (0);
+    if (! state.isValid() || state.getType() != apvts.state.getType())
+        return false;
+
+    apvts.replaceState (state.createCopy());
+    dirty = true;
+    return true;
+}
+
 void PreChorusProcessor::selectCaptureSlot (int slotIdx)
 {
     if (slotIdx >= 0 && slotIdx < kNumHistorySlots)
