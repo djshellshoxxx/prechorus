@@ -149,6 +149,35 @@ public:
             expectWithinAbsoluteError (p.param (IDs::detune), 19.0f, 0.01f);
             file.deleteFile();
         }
+
+        beginTest ("wrong-product and future-version presets are rejected atomically");
+        {
+            PreChorusProcessor p;
+            p.setParam (IDs::space, 0.42f);
+
+            auto makePreset = [&] (const juce::String& product, int version)
+            {
+                juce::ValueTree wrapper ("PRECHORUS_PRESET");
+                wrapper.setProperty ("schemaVersion", version, nullptr);
+                wrapper.setProperty ("product", product, nullptr);
+                wrapper.addChild (p.apvts.copyState(), -1, nullptr);
+                return wrapper.createXml()->toString();
+            };
+
+            auto wrongProduct = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                    .getNonexistentChildFile ("prechorus-wrong-product", ".pchpreset", false);
+            wrongProduct.replaceWithText (makePreset ("OtherProduct", 1));
+            expect (! p.loadUserPreset (wrongProduct));
+            expectWithinAbsoluteError (p.param (IDs::space), 0.42f, 0.011f);
+            wrongProduct.deleteFile();
+
+            auto futureVersion = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getNonexistentChildFile ("prechorus-future", ".pchpreset", false);
+            futureVersion.replaceWithText (makePreset ("PreChorus", 999));
+            expect (! p.loadUserPreset (futureVersion));
+            expectWithinAbsoluteError (p.param (IDs::space), 0.42f, 0.011f);
+            futureVersion.deleteFile();
+        }
     }
 };
 
