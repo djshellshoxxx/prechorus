@@ -804,16 +804,30 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (seqCombo);
     seqAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sequence, seqCombo);
 
+    presetSearch.setTextToShowWhenEmpty ("SEARCH PRESETS", PCColours::textDim);
+    presetSearch.setTooltip ("Filter factory presets by name. Search is case-insensitive.");
+    presetSearch.setColour (juce::TextEditor::backgroundColourId, PCColours::panel2);
+    presetSearch.setColour (juce::TextEditor::textColourId, PCColours::text);
+    presetSearch.setColour (juce::TextEditor::outlineColourId, PCColours::outline);
+    addAndMakeVisible (presetSearch);
+
     presetCombo.setTextWhenNothingSelected ("FACTORY PRESETS");
     presetCombo.addItemList (PreChorusProcessor::getFactoryPresetNames(), 1);
     addAndMakeVisible (presetCombo);
+    presetSearch.onTextChange = [this] {
+        const auto matches = PreChorusProcessor::getMatchingFactoryPresetNames (presetSearch.getText());
+        presetCombo.clear (juce::dontSendNotification);
+        presetCombo.addItemList (matches, 1);
+        presetCombo.setTextWhenNothingSelected (matches.isEmpty() ? "NO MATCHES" : "FACTORY PRESETS");
+    };
     presetCombo.onChange = [this] {
-        const int idx = presetCombo.getSelectedItemIndex();
+        const auto name = presetCombo.getText();
+        const int idx = PreChorusProcessor::getFactoryPresetNames().indexOf (name);
         if (idx >= 0)
         {
             proc.loadFactoryPreset (idx);
             waveform.rebuild();
-            setStatus ("Preset: " + presetCombo.getText());
+            setStatus ("Preset: " + name);
         }
     };
 
@@ -972,7 +986,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
 
     addChildComponent (help);
     setResizable (true, true);
-    setResizeLimits (1000, 700, 1800, 1200);
+    setResizeLimits (1100, 740, 1800, 1200);
     setSize (1240, 840);
     setWantsKeyboardFocus (true);
     startTimerHz (15);
@@ -1132,6 +1146,8 @@ void PreChorusEditor::resized()
     header.removeFromRight (6);
 
     presetCombo.setBounds (header.removeFromRight (128).reduced (0, 5));
+    header.removeFromRight (6);
+    presetSearch.setBounds (header.removeFromRight (104).reduced (0, 5));
     header.removeFromRight (6);
 
     auto browser = header.withTrimmedLeft (12);
