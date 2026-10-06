@@ -46,6 +46,37 @@ public:
             expectWithinAbsoluteError (b.param (IDs::air), 0.71f, 0.011f);
         }
 
+        beginTest ("host recall preserves saved source mode when an external file exists");
+        {
+            auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("prechorus-state-source", ".wav", false);
+            {
+                juce::WavAudioFormat format;
+                auto stream = wavFile.createOutputStream();
+                std::unique_ptr<juce::AudioFormatWriter> writer (
+                    format.createWriterFor (stream.get(), 44100.0, 2, 16, {}, 0));
+                expect (writer != nullptr);
+                if (writer != nullptr)
+                {
+                    stream.release();
+                    juce::AudioBuffer<float> silence (2, 128);
+                    silence.clear();
+                    writer->writeFromAudioSampleBuffer (silence, 0, silence.getNumSamples());
+                }
+            }
+
+            PreChorusProcessor source;
+            expect (source.loadSampleFile (wavFile, false));
+            source.setParam (IDs::sourceMode, 0.0f);
+
+            juce::MemoryBlock state;
+            source.getStateInformation (state);
+            PreChorusProcessor restored;
+            restored.setStateInformation (state.getData(), (int) state.getSize());
+            expectEquals ((int) restored.param (IDs::sourceMode), 0);
+            wavFile.deleteFile();
+        }
+
         beginTest ("A/B snapshots recall independent parameter states");
         {
             PreChorusProcessor p;
