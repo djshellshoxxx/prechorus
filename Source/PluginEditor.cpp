@@ -625,10 +625,11 @@ void HelpOverlay::resized()
 // ---------------- PreChorus Editor ----------------
 
 PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), tooltipWindow (this, 650), waveform (p), visualizer (p), dragPad (p),
+    : AudioProcessorEditor (&p), proc (p), waveform (p), visualizer (p), dragPad (p),
       pitchTension (p, IDs::pitchTension)
 {
     setLookAndFeel (&lnf);
+    applyTooltipSetting();
 
     title.setText ("PRECHORUS", juce::dontSendNotification);
     title.setFont (juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
@@ -681,6 +682,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (resetButton);
     addAndMakeVisible (randomButton);
     addAndMakeVisible (regenSeedButton);
+    addAndMakeVisible (optionsButton);
     addAndMakeVisible (helpButton);
 
     prevButton.onClick = [this] {
@@ -712,6 +714,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); setStatus ("Sound-design edits reset."); };
     randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); setStatus ("Sound-design parameters randomized."); };
     regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); setStatus ("Deterministic swarm seed regenerated."); };
+    optionsButton.onClick   = [this] { showOptionsMenu(); };
     helpButton.onClick      = [this] { help.setVisible (true); setStatus ("Help opened."); };
 
     exportButton.onClick = [this] {
@@ -893,6 +896,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     resetButton.setTooltip ("Reset the main sound-design edits without replacing the loaded or captured source.");
     randomButton.setTooltip ("Randomize musical sound-design parameters while preserving the source. Shortcut: R.");
     regenSeedButton.setTooltip ("Generate a new deterministic swarm seed without changing the other controls. Shortcut: G.");
+    optionsButton.setTooltip ("Open interface options, including the global tooltip switch.");
     helpButton.setTooltip ("Open workflow and control help. Shortcut: H or F1.");
     armButton.setTooltip ("Arm live capture. Click again to cancel the armed state.");
     captureButton.setTooltip ("Start or stop manual live capture for the active history slot.");
@@ -1016,6 +1020,36 @@ void PreChorusEditor::timerCallback()
     }
 }
 
+void PreChorusEditor::applyTooltipSetting()
+{
+    if (tooltipsEnabled)
+    {
+        if (tooltipWindow == nullptr)
+            tooltipWindow = std::make_unique<juce::TooltipWindow> (this, 650);
+    }
+    else
+    {
+        tooltipWindow.reset();
+    }
+}
+
+void PreChorusEditor::showOptionsMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Interface");
+    menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&optionsButton),
+                        [this] (int result)
+                        {
+                            if (result == 1)
+                            {
+                                tooltipsEnabled = ! tooltipsEnabled;
+                                applyTooltipSetting();
+                                setStatus (tooltipsEnabled ? "Tooltips enabled." : "Tooltips disabled.");
+                            }
+                        });
+}
+
 void PreChorusEditor::paint (juce::Graphics& g)
 {
     juce::ColourGradient grad (PCColours::bg.brighter (0.05f), 0.0f, 0.0f, PCColours::bg, 0.0f, (float) getHeight(), false);
@@ -1064,6 +1098,8 @@ void PreChorusEditor::resized()
     title.setBounds (titleArea.removeFromTop (22));
     subtitle.setBounds (titleArea);
     helpButton.setBounds (header.removeFromRight (28).reduced (0, 5));
+    header.removeFromRight (4);
+    optionsButton.setBounds (header.removeFromRight (70).reduced (0, 5));
     header.removeFromRight (6);
 
     sourceModeCombo.setBounds (header.removeFromRight (110).reduced (0, 5));
