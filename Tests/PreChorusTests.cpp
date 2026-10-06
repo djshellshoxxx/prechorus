@@ -88,7 +88,16 @@ public:
 
             auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
                             .getNonexistentChildFile ("prechorus-test", ".pchpreset", false);
+            juce::MemoryBlock session;
+            p.getStateInformation (session);
+            p.setStateInformation (session.getData(), (int) session.getSize());
+
             expect (p.saveUserPreset (file));
+            const auto presetText = file.loadFileAsString();
+            expect (! presetText.contains ("activeSlot="));
+            expect (! presetText.contains ("compareA="));
+            expect (! presetText.contains ("compareB="));
+            expect (! presetText.contains ("file="));
 
             p.setParam (IDs::pitchSpread, 1.0f);
             p.setParam (IDs::space, 0.05f);
