@@ -226,8 +226,12 @@ private:
     // Sidechain ducking envelope follower
     float duckEnv = 0.0f;
 
-    mutable juce::SpinLock renderLock;
+    mutable juce::CriticalSection renderedOwnerLock;
     std::shared_ptr<RenderedSample> rendered;
+    std::vector<std::shared_ptr<RenderedSample>> retiredRendered;
+    std::atomic<const RenderedSample*> realtimeRendered { nullptr };
+    std::atomic<int> realtimeReaders { 0 };
+    std::atomic<double> reportedTailSeconds { 0.0 };
 
     double hostSampleRate = 44100.0;
     std::atomic<double> hostBpm { 120.0 };
