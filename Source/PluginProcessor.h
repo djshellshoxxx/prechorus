@@ -187,6 +187,8 @@ private:
     void timerCallback() override;
     void render();
     void refreshFolderList (const juce::File& f);
+    void requestCaptureFinalizeRealtime();
+    void finalizePendingCapture();
 
     struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain);
@@ -217,6 +219,7 @@ private:
     int captureWritePos = 0;
     int captureTargetSamples = 0;
     int captureSilenceCounter = 0;
+    std::atomic<int> pendingCaptureSamples { 0 };
 
     // Target Confidence & Transport Recovery
     std::atomic<float> targetConfidence { 1.0f };
