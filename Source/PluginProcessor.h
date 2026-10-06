@@ -170,7 +170,7 @@ public:
     bool storeCompareState (int slot);
     bool recallCompareState (int slot);
     int getCurrentCompareSlot() const { return currentCompareSlot.load(); }
-    bool saveUserPreset (const juce::File& file) const;
+    bool saveUserPreset (const juce::File& file);
     bool loadUserPreset (const juce::File& file);
 
     std::shared_ptr<const RenderedSample> getRendered() const;
