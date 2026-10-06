@@ -1,7 +1,7 @@
 # PreChorus Product Specification
 
-**Status:** Active implementation specification  
-**Version:** 1.2  
+**Status:** Feature-complete release specification  
+**Version:** 1.3  
 **Product:** PreChorus  
 **Shared baseline:** [Circuit Drift Labs Shared Audio Plugin Standard](standards/CDL_PLUGIN_BASELINE.md)
 
@@ -123,9 +123,15 @@ The help overlay MUST explain:
 - factory presets;
 - export and drag-to-DAW behavior.
 
-## 8. State and preset behavior
+## 8. State, A/B comparison, and preset behavior
 
-Host state is authoritative for project recall. APVTS parameters MUST be restored from saved state.
+Host state is authoritative for project recall.
+
+The editor MUST provide two independent A/B parameter snapshots. A and B MUST exclude source media and capture history, MUST be recallable without replacing loaded/captured audio, and MUST survive host state save/restore.
+
+Users MUST be able to save and load portable `.pchpreset` files. The preset format MUST include a schema version, validate product/type before applying, reject malformed or unsupported files atomically, and exclude external source paths, capture media, and A/B metadata.
+
+The factory preset browser MUST provide case-insensitive name filtering. APVTS parameters MUST be restored from saved state.
 
 The state additionally stores the selected external source path, active capture slot, and capture lock. If the external source file is missing at restore time, PreChorus MUST remain stable and retain parameter state.
 
@@ -155,20 +161,19 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 | Reduced motion option | Implemented in v1.2 | Decorative orbit/flash can be disabled |
 | State restore | Implemented | APVTS + source path/slot/lock |
 | Presets | Implemented | 10 factory presets |
-| A/B comparison | Planned | Useful future workflow feature |
+| A/B comparison | Implemented in v1.3 | Two source-safe parameter snapshots persisted with host state |
 | Offline WAV export | Implemented | 24-bit stereo WAV |
 | Unsupported bus rejection | Implemented | Stereo output; disabled/mono/stereo input |
-| Automated unit tests | Planned | Add parameter/state/DSP regression target |
+| Automated unit tests | Implemented in v1.3 | JUCE test executable covers bus layouts, host state, A/B, preset search and user preset validation |
 | Output peak/clip metering | Implemented in v1.2 | Stereo post-processing peak in dBFS |
-| CI build matrix | Partial | Windows VST3/Standalone build gate added; macOS remains planned |
+| User presets | Implemented in v1.3 | Versioned .pchpreset parameter files with validation |
+| Searchable factory presets | Implemented in v1.3 | Case-insensitive filtering |
+| Resizable UI | Implemented in v1.3 | 1100x740 minimum prevents known control overlap |
+| CI build matrix | Implemented in v1.3 | Windows and macOS build/test gates |
 | Accessibility audit | Planned | Focus order and reduced-motion pass remains |
 
-## 12. Future usability work
+## 12. Completion status and post-release enhancements
 
-Prioritized follow-up items:
-1. A/B state comparison that snapshots parameter state without duplicating source media.
-2. User preset save/load with schema versioning and validation.
-3. Searchable preset browser and favorites.
-4. Resizable/scalable UI with a compact laptop layout.
-5. macOS AU/Standalone CI validation.
-6. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
+The v1.3 specification is feature-complete for the defined product scope. No requirement in sections 1–11 is intentionally left unimplemented.
+
+Potential post-release enhancements are non-blocking: persistent cross-project preset favorites, additional factory content, larger accessibility text modes, more DAW-specific integration tests, fuzzing of preset/state parsers, and expanded DSP golden-file regression coverage.
