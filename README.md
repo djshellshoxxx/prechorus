@@ -1,6 +1,8 @@
 # PreChorus
 
-32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + AU + Standalone, made with JUCE.
+32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + CLAP + Standalone (Windows), AU on macOS builds, made with JUCE.
+
+**Download:** see the [Releases](https://github.com/djshellshoxxx/prechorus/releases) page for the v0.0.1 beta installer, portable app, VST3 and CLAP. Release notes: [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
 
 **The Signature Sound**: A cloud of related voices becoming progressively more recognizable, coherent, and intimate until they meet the original drop or event.
 
@@ -39,7 +41,7 @@
 - **Dimension**: Ultra-wide cross-coupled chorusing (Roland Dimension D style) designed to preserve a solid, phase-safe mono center.
 - **String Ensemble**: Vintage Solina/ARP-inspired multi-rate dual-LFO modulation (0.6 Hz slow LFO + 6.0 Hz vibrato).
 - **Granular Cloud**: Grains form an ethereal ambient texture while remaining tightly tied to the source.
-- **Lo-Fi Choral**: Vintage bit-depth and sample-rate reduction for gritty, crushed vocal chops.
+- **Lo-Fi Choral**: Vintage bit-depth and sample-rate reduction (~11 kHz sample-and-hold) for gritty, crushed vocal chops.
 
 ### 4. Convergence Engine & Musical Motion
 - **Convergence Macro (`MACRO` knob)**: A master knob scaling all enabled convergence dimensions simultaneously.
@@ -68,10 +70,14 @@
 - **Formant Shift**: Transposes vocal formants independent of pitch (±12 semitones).
 - **Mono Bass**: High-passes the Side channel below cutoff (20 Hz–300 Hz) to keep club sub-bass 100% pure mono.
 - **Sidechain Ducking**: Automatically ducks the swell whenever live input vocals or drum hits strike.
+- **Build Stutter**: Tempo-locked gate across the second half of the swell that accelerates 1/8 → 1/16 → 1/32 into the hit.
+- **Trim In / Out**: Crop the rendered result.
 - **Click Protection & Reverse Fades**: 5ms cosine windowing on grain edges and reverse turnarounds for 100% click-free playback.
 
 ### 6. Factory Presets
 - **10 Curated Starting Points**: Pop Vocal Double, EDM Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, and Trap Vocal Stutter.
+- **User Presets**: Save/Load `.pcpreset` files from the preset menu (stored in `Documents\Circuit Drift Labs\PreChorus\Presets`).
+- **A/B Compare**: Swap between two sound-design snapshots (button or **B** key) and copy one to the other.
 - Presets shape the swarm, convergence, and tone-color knobs only — your loaded/captured source audio, trims, and envelope shaping are left untouched, so a preset can be auditioned on any material.
 
 ### 7. DAW Integration & Performance
@@ -80,9 +86,11 @@
 - **Follow Tempo**: Automatically recalculates voice paths and swell lengths whenever the DAW BPM shifts.
 - **Transport Recovery**: Detects DAW playhead jumps, loop restarts, or scrub discontinuities, immediately clearing voice buffers to prevent clicks or stale audio artifacts.
 - **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
-- **MIDI Triggered**: Any MIDI note-on received by the plugin fires the swarm (velocity-sensitive), so a DAW MIDI track can trigger the drop exactly on the beat.
+- **MIDI Triggered**: Any MIDI note-on received by the plugin fires the swarm sample-accurately (velocity-sensitive), so a DAW MIDI track can trigger the drop exactly on the beat.
+- **Keytrack**: Play the swarm chromatically from MIDI — note C4 is the original pitch.
+- **Resizable Window**: Drag the corner or pick 60–150% in OPTIONS.
 - **Drag-and-Drop Loading**: Drop a WAV/AIFF/FLAC/MP3/OGG file straight onto the plugin window to load it as the source.
-- **Keyboard Workflow**: Space previews, Esc stops, R randomizes sound-design controls, G regenerates the deterministic seed, and H/F1 opens help.
+- **Keyboard Workflow**: Space previews, Esc stops, R randomizes sound-design controls, G regenerates the deterministic seed, B switches A/B, and H/F1 opens help.
 - **Action Status Bar**: Loading, export, preview, preset, reset, randomize, and regeneration actions report success/state without interrupting audio.
 - **Control Tooltips**: Primary buttons, selectors, toggles, and rotary controls provide inline usage guidance.
 - **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
@@ -95,13 +103,18 @@
    cd C:\Users\new\desktop\antigravityprojects\prechorus
    .\build.ps1
    ```
-2. Automatically builds VST3 and Standalone targets and installs `PreChorus.vst3` to `C:\Program Files\Common Files\VST3\PreChorus.vst3`.
+2. Automatically builds VST3, CLAP and Standalone targets and installs `PreChorus.vst3` to `C:\Program Files\Common Files\VST3` and `PreChorus.clap` to `C:\Program Files\Common Files\CLAP`.
+
+Releases are produced by `.github/workflows/release.yml` (push a `v*` tag or run it manually): it builds all formats, then packages the Inno Setup installer (`installer/PreChorus.iss`), portable zip, VST3 zip and CLAP zip into a GitHub pre-release.
 
 ## Build (macOS / Linux)
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
+
+## Privacy
+PreChorus makes no network connections and has no telemetry, analytics, licence or update checks. Files are only read or written when you load, export, drag out, or save/load presets.
 
 ## License
 PreChorus is currently distributed under the repository's proprietary license. See [LICENSE](LICENSE) and [COPYRIGHT-TRADEMARK.md](COPYRIGHT-TRADEMARK.md). Earlier versions that were published under MIT remain under the terms that accompanied those versions.

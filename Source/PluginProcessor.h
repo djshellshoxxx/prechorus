@@ -72,6 +72,10 @@ namespace IDs
     static const juce::String sync = "sync", syncLen = "syncLen";
     static const juce::String sequence = "sequence";           // Target Sequence
 
+    // v0.0.1 additions
+    static const juce::String keytrack = "keytrack";           // MIDI note transposes swarm playback (C4 = original)
+    static const juce::String stutter = "stutter";             // Build stutter gate accelerating into the hit
+
     // Envelopes & Trim
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
@@ -119,7 +123,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override;
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram (int) override {}
@@ -129,7 +133,7 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // Sample loading
-    bool loadSampleFile (const juce::File& f, bool previewAfter = false);
+    bool loadSampleFile (const juce::File& f, bool previewAfter = false, bool switchFromLiveCapture = true);
     void nextSample();
     void prevSample();
     juce::File getCurrentFile() const { return currentFile; }
@@ -157,6 +161,7 @@ public:
 
     // Swarm Playback & Preview
     void triggerPreview() { triggerRequest = 1; }
+    bool isPreviewPlaying() const { return playhead.load() >= 0; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
     void resetEdits();
@@ -165,24 +170,44 @@ public:
     void loadFactoryPreset (int index);
     static juce::StringArray getFactoryPresetNames();
 
+    // A/B comparison (parameter snapshots only; never touches source audio or capture history)
+    void switchABSlot();
+    void copyCurrentToOtherAB();
+    bool isSlotBActive() const { return abSlotB; }
+
+    // User presets (versioned XML, validated before applying)
+    static juce::File getUserPresetFolder();
+    bool saveUserPreset (const juce::File& f, juce::String& error);
+    bool loadUserPreset (const juce::File& f, juce::String& error);
+
+    // Editor view preference (stored with host state, not a sound parameter)
+    int uiWidth = 0, uiHeight = 0;
+    static constexpr int kStateVersion = 2;
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }
     double getHostBpm() const { return hostBpm.load(); }
     float param (const juce::String& id) const { return apvts.getRawParameterValue (id)->load(); }
     void setParam (const juce::String& id, float value);
+    void beginGesture (const juce::String& id) { if (auto* p = apvts.getParameter (id)) p->beginChangeGesture(); }
+    void endGesture (const juce::String& id)   { if (auto* p = apvts.getParameter (id)) p->endChangeGesture(); }
 
     juce::AudioProcessorValueTreeState apvts;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void parameterChanged (const juce::String&, float) override { dirty = true; }
+    void parameterChanged (const juce::String&, float) override;
+    void commitFinishedCapture();
+    void finishCaptureOnAudioThread();
+    void applySoundDesignDefaults();
+    juce::ValueTree soundDesignSnapshot() const;
+    void applySoundDesignSnapshot (const juce::ValueTree& t);
     void timerCallback() override;
     void render();
     void refreshFolderList (const juce::File& f);
 
-    struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
-    void startVoice (float gain);
-    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet, float duckGain);
+    struct Voice { bool active = false; double pos = 0.0; double rate = 1.0; float gain = 1.0f; juce::uint32 id = 0; };
+    void startVoice (float gain, double rate, int sampleOffset);
+    void renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry, float wet, float duckGain);
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
@@ -203,6 +228,9 @@ private:
 
     // Live Capture state
     std::atomic<CaptureState> captureState { CaptureState::idle };
+    enum CaptureCommand { cmdNone = 0, cmdArm, cmdManualToggle, cmdCancel };
+    std::atomic<int> captureCommand { cmdNone };
+    std::atomic<int> capturedLength { 0 };
     std::atomic<float> inputMeter { 0.0f };
     std::atomic<float> outputMeter { 0.0f };
     juce::AudioBuffer<float> captureRingBuffer;
@@ -220,6 +248,7 @@ private:
 
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;
+    std::vector<std::shared_ptr<RenderedSample>> retiredRendered; // freed on the message thread only
 
     double hostSampleRate = 44100.0;
     std::atomic<double> hostBpm { 120.0 };
@@ -228,9 +257,18 @@ private:
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
     std::array<Voice, 16> voices;
+
+    // Dry-path delay so PDC alignment keeps the dry input in sync with the reported latency
+    juce::AudioBuffer<float> dryDelay;
+    int dryDelayWrite = 0;
+    std::atomic<int> reportedLatency { 0 };
+
+    juce::ValueTree abSnapshots[2];
+    bool abSlotB = false;
     juce::uint32 voiceCounter = 0;
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
 
+    friend class PreChorusCoreTests;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreChorusProcessor)
 };

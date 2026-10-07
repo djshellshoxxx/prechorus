@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create (e.g. v0.0.1-beta)
+        required: true
+        default: v0.0.1-beta
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build VST3, CLAP and Standalone
+        run: cmake --build build --config Release --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone --parallel 2
+
+      - name: Stage and package
+        shell: pwsh
+        run: |
+          $ver = $env:TAG.TrimStart('v')
+          $art = "build/PreChorus_artefacts/Release"
+          New-Item -ItemType Directory -Force stage, dist | Out-Null
+          Copy-Item "$art/VST3/PreChorus.vst3" stage -Recurse
+          Copy-Item "$art/CLAP/PreChorus.clap" stage
+          Copy-Item "$art/Standalone/PreChorus.exe" stage
+          Copy-Item LICENSE stage/LICENSE.txt
+          Copy-Item docs/RELEASE_NOTES.md stage/README.txt
+          Compress-Archive -Path stage/PreChorus.vst3, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-VST3.zip"
+          Compress-Archive -Path stage/PreChorus.clap, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-CLAP.zip"
+          Compress-Archive -Path stage/PreChorus.exe, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-Portable.zip"
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+            $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          iscc /DAppVersion=$ver /DStage="$PWD\stage" /DOutDir="$PWD\dist" installer\PreChorus.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+          Get-ChildItem dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: PreChorus ${{ env.TAG }}
+          prerelease: true
+          body_path: docs/RELEASE_NOTES.md
+          files: dist/*

@@ -54,7 +54,7 @@ private:
 };
 
 // Interactive Waveform Display with Tension Curves and Trim
-class WaveformDisplay : public juce::Component, private juce::Timer
+class WaveformDisplay : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     explicit WaveformDisplay (PreChorusProcessor&);
@@ -63,10 +63,10 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
-    void mouseMove (const juce::MouseEvent&) override;
     void rebuild();
 private:
-    enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension };
+    enum class Drag { none, volStart, volEnd, volTension };
+    static const juce::String& dragParam (Drag d);
     void timerCallback() override;
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
@@ -75,19 +75,19 @@ private:
     juce::Path swellPath, hitPath;
     int total = 0, hitIndex = -1, lastPlayhead = -2;
     float lastTone = -1, lastBass = -1, lastV0 = -1, lastV1 = -1, lastVT = -9;
-    Drag drag = Drag::none, hover = Drag::none;
+    Drag drag = Drag::none;
     juce::Point<float> downPos;
-    float downA = 0, downB = 0, downSpan = 1;
-    bool moved = false;
+    float downA = 0;
 };
 
-class TensionBox : public juce::Component, private juce::Timer
+class TensionBox : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     TensionBox (PreChorusProcessor& p, const juce::String& id) : proc (p), paramId (id) { startTimerHz (15); }
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent& e) override { downT = proc.param (paramId); downY = e.y; }
+    void mouseDown (const juce::MouseEvent& e) override { downT = proc.param (paramId); downY = e.y; proc.beginGesture (paramId); }
     void mouseDrag (const juce::MouseEvent& e) override { proc.setParam (paramId, juce::jlimit (-1.0f, 1.0f, downT + (float) (downY - e.y) / 60.0f)); repaint(); }
+    void mouseUp (const juce::MouseEvent&) override { proc.endGesture (paramId); }
     void mouseDoubleClick (const juce::MouseEvent&) override { proc.setParam (paramId, 0.0f); repaint(); }
 private:
     void timerCallback() override { const float t = proc.param (paramId); if (t != shown) { shown = t; repaint(); } }
@@ -96,7 +96,7 @@ private:
     float downT = 0, shown = -9; int downY = 0;
 };
 
-class DragOutPad : public juce::Component
+class DragOutPad : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit DragOutPad (PreChorusProcessor& p) : proc (p) {}
@@ -116,9 +116,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override { setVisible (false); }
+    bool keyPressed (const juce::KeyPress& k) override { if (k == juce::KeyPress::escapeKey) { setVisible (false); return true; } return false; }
 private:
     juce::TextEditor body;
     juce::TextButton closeButton { "CLOSE" };
+    juce::HyperlinkButton siteLink { "circuitdriftlabs", juce::URL ("https://djshellshoxxx.github.io/circuitdriftlabs/") };
 };
 
 class PreChorusEditor : public juce::AudioProcessorEditor,
@@ -149,6 +151,12 @@ private:
     void setStatus (const juce::String& text);
     void applyTooltipSetting();
     void showOptionsMenu();
+    void refreshPresetMenu();
+    void openHelp();
+    void rebuildWaveform() { waveform.rebuild(); }
+    static constexpr int kBaseW = 1320, kBaseH = 860;
+    juce::Array<juce::File> userPresetFiles;
+    int lastPresetId = 0;
 
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
@@ -158,7 +166,8 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, rangeLabel, confidenceLabel, statusLabel, outputLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
-                     regenSeedButton { "REGEN" }, optionsButton { "OPTIONS" }, helpButton { "?" };
+                     regenSeedButton { "REGEN" }, optionsButton { "OPTIONS" }, helpButton { "?" },
+                     abButton { "A" }, abCopyButton { "COPY" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
@@ -168,8 +177,8 @@ private:
 
     // Toggles & Alignment
     juce::ToggleButton freezeToggle { "FREEZE" }, revConvergeToggle { "REV CONV" }, alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" },
-                       reducedMotionToggle { "REDUCED MOTION" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, revConvergeAtt, alignAtt, syncAtt;
+                       reducedMotionToggle { "REDUCED MOTION" }, keytrackToggle { "KEYTRACK" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, revConvergeAtt, alignAtt, syncAtt, keytrackAtt;
     juce::ComboBox syncCombo, rangeCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
 
@@ -194,10 +203,10 @@ private:
     Knob *kTail, *kShape, *kTone, *kBass, *kResonance, *kTilt, *kPresence, *kAir, *kSpace, *kDrive, *kTransients, *kFormant, *kMonoBass;
 
     // Mix, Capture & Ducking
-    Knob *kDry, *kWet, *kDryReplace, *kThresh, *kDucking;
+    Knob *kDry, *kWet, *kDryReplace, *kThresh, *kDucking, *kStutter;
 
     // Pitch & Volume Envelopes
-    Knob *kPitch, *kVolStart, *kVolEnd, *kVolTension;
+    Knob *kPitch, *kVolStart, *kVolEnd, *kVolTension, *kTrimStart, *kTrimEnd;
 
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
