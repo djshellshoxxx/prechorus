@@ -15,5 +15,5 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build VST3 and Standalone
-        run: cmake --build build --config Release --target PreChorus_VST3 PreChorus_Standalone --parallel 2
+      - name: Build VST3, CLAP and Standalone
+        run: cmake --build build --config Release --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone --parallel 2

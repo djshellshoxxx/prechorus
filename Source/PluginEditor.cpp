@@ -338,6 +338,9 @@ void WaveformDisplay::rebuild()
 
 void WaveformDisplay::timerCallback()
 {
+    // The processor re-renders asynchronously on its own timer; pick up each new render here.
+    if (proc.getRendered() != cached) { rebuild(); repaint(); }
+
     const int ph = proc.getPlayheadPosition();
     const float t = proc.param (IDs::tone);
     const float b = proc.param (IDs::basscut);
@@ -376,19 +379,6 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (PCColours::outline.withAlpha (0.3f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
 
-    const float outputPeak = proc.getOutputLevel();
-    if (outputPeak >= 1.0f)
-    {
-        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
-        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
-    }
-    else
-    {
-        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
-        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
-        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
-    }
-
     const juce::Colour col = PCColours::swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     g.setColour (col.withAlpha (0.85f));
     g.fillPath (swellPath);
@@ -421,27 +411,8 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (PCColours::accent);
     g.fillEllipse (p.getCentreX() - 3.5f, volY (midLvl) - 3.5f, 7.0f, 7.0f);
 
-    const float tStart = proc.param (IDs::trimStart);
-    const float tEnd   = proc.param (IDs::trimEnd);
-    if (tStart > 0.001f)
-    {
-        const float tx = p.getX() + tStart * p.getWidth();
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRect (p.getX(), p.getY(), tx - p.getX(), p.getHeight());
-        g.setColour (PCColours::textDim);
-        g.drawVerticalLine ((int) tx, p.getY(), p.getBottom());
-    }
-    if (tEnd < 0.999f)
-    {
-        const float tx = p.getX() + tEnd * p.getWidth();
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRect (tx, p.getY(), p.getRight() - tx, p.getHeight());
-        g.setColour (PCColours::textDim);
-        g.drawVerticalLine ((int) tx, p.getY(), p.getBottom());
-    }
-
     const int ph = proc.getPlayheadPosition();
-    if (ph >= 0 && total > 0)
+    if (ph >= 0 && total > 0 && ph < total)
     {
         const float phX = p.getX() + ((float) ph / (float) total) * p.getWidth();
         const float lvl = juce::jlimit (0.0f, 1.0f, proc.getOutputLevel() * 1.8f);
@@ -455,11 +426,16 @@ void WaveformDisplay::paint (juce::Graphics& g)
     }
 }
 
+const juce::String& WaveformDisplay::dragParam (Drag d)
+{
+    static const juce::String none;
+    return d == Drag::volStart ? IDs::volStart : d == Drag::volEnd ? IDs::volEnd : d == Drag::volTension ? IDs::volTension : none;
+}
+
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 {
     auto p = plot();
     downPos = e.position;
-    moved = false;
 
     const float v0 = proc.param (IDs::volStart);
     const float v1 = proc.param (IDs::volEnd);
@@ -470,11 +446,11 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     else if (e.position.getDistanceFrom ({ p.getRight(), volY (v1) }) < 12.0f) drag = Drag::volEnd;
     else if (e.position.getDistanceFrom ({ p.getCentreX(), volY (midLvl) }) < 12.0f) { drag = Drag::volTension; downA = vt; }
     else { drag = Drag::none; proc.triggerPreview(); }
+    if (drag != Drag::none) proc.beginGesture (dragParam (drag));
 }
 
 void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
 {
-    moved = true;
     auto p = plot();
     const float lvl = juce::jlimit (0.0f, 1.0f, (p.getBottom() - e.position.y) / p.getHeight());
 
@@ -488,8 +464,11 @@ void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
-void WaveformDisplay::mouseUp (const juce::MouseEvent&) { drag = Drag::none; }
-void WaveformDisplay::mouseMove (const juce::MouseEvent&) {}
+void WaveformDisplay::mouseUp (const juce::MouseEvent&)
+{
+    if (drag != Drag::none) proc.endGesture (dragParam (drag));
+    drag = Drag::none;
+}
 
 // ---------------- Drag Out Pad ----------------
 
@@ -567,40 +546,54 @@ HelpOverlay::HelpOverlay()
     body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     body.setFont (juce::Font (juce::FontOptions (11.5f)));
     body.setText (
-        "PRECHORUS - Complete 32-Voice Swarm & Convergence Engine\n\n"
-        "The Signature Sound: A cloud of related voices becoming progressively more recognizable "
+        "PRECHORUS v" PRECHORUS_VERSION_STRING " BETA - 32-Voice Swarm & Convergence Engine by Circuit Drift Labs\n"
+        "Formats: VST3, CLAP, Standalone (Windows x64); AU on macOS builds. No network access, telemetry or licence checks.\n\n"
+        "The Signature Sound: a cloud of related voices becoming progressively more recognizable "
         "and coherent until they meet the original drop or event.\n\n"
         "QUICK WORKFLOW:\n"
-        "1. LOAD or capture a source.  2. Pick a factory preset or character.  3. Shape swarm/convergence.\n"
-        "4. Press Space/PLAY to audition.  5. EXPORT WAV or drag the rendered result to your DAW.\n\n"
+        "1. LOAD (or drag a file onto the window) or capture a source.  2. Pick a preset or character.\n"
+        "3. Shape swarm/convergence.  4. Press Space/PLAY or send MIDI notes to audition.\n"
+        "5. EXPORT WAV or drag the DRAG TO DAW pad onto a DAW track.\n\n"
+        "SOURCE MODES:\n"
+        "- Live Capture: uses the active capture history slot (ARM / LIVE CAPTURE record from the plug-in input).\n"
+        "- Loaded Sample: uses the loaded WAV/AIFF/FLAC/MP3/OGG file (first 12 s). Loading a file while in Live Capture switches here.\n"
+        "- Hybrid Layer: mixes the loaded file and the active capture slot at equal level.\n"
+        "- Slice Scatter: splits the loaded file into 8 slices and spreads them across the voices.\n"
+        "Capture: 8 history slots (1-8). LOCK protects the active take; new takes go to the next free slot.\n"
+        "A finished capture switches Loaded Sample back to Live Capture so the new take is audible.\n\n"
         "KEYBOARD SHORTCUTS:\n"
-        "• Space: preview the current swarm.\n"
-        "• Esc: stop active preview voices.\n"
-        "• R: randomize sound-design parameters.\n"
-        "• G: regenerate the deterministic swarm seed.\n"
-        "• H / F1: open this help panel.\n\n"
-        "FACTORY PRESETS: Pick a starting point from the header dropdown (Pop Vocal Double, EDM "
-        "Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic "
-        "Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, Trap "
-        "Vocal Stutter). Presets only touch swarm/tone/convergence knobs, never your loaded audio.\n\n"
+        "- Space: preview the current swarm.   - Esc: stop preview (or close this help).\n"
+        "- R: randomize sound-design parameters.   - G: regenerate the deterministic swarm seed.\n"
+        "- H / F1: open this help panel.   - B: switch A/B comparison slot.\n\n"
+        "PRESETS: The preset menu holds 10 factory presets (Pop Vocal Double, EDM Riser Swarm, Future Bass "
+        "Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic Choir Pad, Lo-Fi Bedroom Vocal, "
+        "Ambient Drone Freeze, Aggressive Distortion Drop, Trap Vocal Stutter), your saved user presets, and "
+        "Save/Load entries. Presets only change sound-design controls, never your audio or capture history. "
+        "User presets live in Documents/Circuit Drift Labs/PreChorus/Presets (.pcpreset, versioned XML).\n\n"
+        "A/B COMPARE: the A/B button swaps between two sound-design snapshots; COPY copies the current one to the other slot.\n\n"
+        "KEYTRACK: when on, MIDI notes transpose the swarm (C4 = original pitch) so you can play it like an instrument. "
+        "Transposed notes also stretch/shrink time, so the hit lands earlier/later than the PDC-aligned note.\n\n"
+        "BUILD STUTTER: a gate in the second half of the swell that accelerates from 1/8 to 1/16 to 1/32 notes "
+        "(at host tempo) into the hit - the classic pre-chorus build.\n\n"
         "CHARACTER MODES:\n"
-        "• Clean Digital: Pristine transparent sinc/linear interpolation.\n"
-        "• Analog Ensemble: Warm saturation, gentle drift, bandwidth contouring.\n"
-        "• Bucket-Brigade (BBD): Darker repeats, analog BBD clock roll-off, companding, and clock noise.\n"
-        "• Tape Choir: Wow & flutter pitch modulation and tape head saturation.\n"
-        "• Dimension: Ultra-wide cross-coupled chorusing designed to preserve solid mono center.\n"
-        "• String Ensemble: Solina-style multi-rate dual-LFO modulation.\n"
-        "• Granular Cloud: Micro-grain cloud with variable grain size and Hann windowing.\n"
-        "• Lo-Fi Choral: Vintage bit-depth and sample-rate reduction.\n\n"
-        "GLOBAL SHAPING & MOTION:\n"
-        "• 3D Distance: Doppler distance staging (far cavern wash -> upfront dry impact).\n"
-        "• Focus: Accelerates convergence near the drop into laser focus.\n"
-        "• Tilt EQ, Presence & Air: Spectral balance pivot, presence lift, and filtered HF air excitation.\n"
-        "• Mono Bass: High-passes side channel below cutoff frequency (pure mono sub-bass).\n"
-        "• Ducking: Sidechains and ducks the swell when live input vocals/hits strike.\n"
+        "- Clean Digital: transparent linear interpolation.  - Analog Ensemble: warm saturation and slow pitch drift.\n"
+        "- Bucket-Brigade: dark clock roll-off and clock noise.  - Tape Choir: wow & flutter with tape saturation.\n"
+        "- Dimension: wide cross-coupled chorus keeping a solid mono centre.  - String Ensemble: Solina-style dual LFO.\n"
+        "- Granular Cloud: Hann-windowed micro-grains (GRAIN MS).  - Lo-Fi Choral: 4-bit style crush + ~11 kHz sample-rate reduction.\n\n"
+        "EXPORT & DRAG-TO-DAW: EXPORT WAV and DRAG TO DAW write the exact rendered preview as stereo 24-bit PCM "
+        "WAV at the current sample rate, with the SWARM WET / HIT DRY levels applied (no normalization or limiting). "
+        "Dragging uses a temporary file named PreChorus_Swarm.wav.\n\n"
+        "HIT ON NOTE (PDC): reports the swell length as latency (max 20 s) and delays the dry input to match, "
+        "so the target hit lands exactly on the MIDI note.\n\n"
+        "TRIM IN / OUT crop the rendered result. Drag the white volume curve points on the waveform to shape the "
+        "volume envelope; click elsewhere on the waveform to preview. Double-click any knob to reset it.\n"
+        "Options: tooltips on/off, reduced motion, and the window can be resized from the bottom-right corner.\n"
     );
     addAndMakeVisible (body);
     addAndMakeVisible (closeButton);
+    siteLink.setFont (juce::Font (juce::FontOptions (11.0f)), false);
+    siteLink.setColour (juce::HyperlinkButton::textColourId, PCColours::neon);
+    addAndMakeVisible (siteLink);
     closeButton.onClick = [this] { setVisible (false); };
 }
 
@@ -617,7 +610,9 @@ void HelpOverlay::paint (juce::Graphics& g)
 void HelpOverlay::resized()
 {
     auto r = getLocalBounds().reduced (60);
-    closeButton.setBounds (r.removeFromBottom (32).withSizeKeepingCentre (120, 30));
+    auto bottom = r.removeFromBottom (32);
+    siteLink.setBounds (bottom.removeFromLeft (200));
+    closeButton.setBounds (bottom.withSizeKeepingCentre (120, 30));
     r.removeFromBottom (10);
     body.setBounds (r);
 }
@@ -684,6 +679,16 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (regenSeedButton);
     addAndMakeVisible (optionsButton);
     addAndMakeVisible (helpButton);
+    addAndMakeVisible (abButton);
+    addAndMakeVisible (abCopyButton);
+    abButton.onClick = [this] {
+        proc.switchABSlot();
+        setStatus (juce::String ("A/B: now editing ") + (proc.isSlotBActive() ? "B." : "A."));
+    };
+    abCopyButton.onClick = [this] {
+        proc.copyCurrentToOtherAB();
+        setStatus (juce::String ("Copied ") + (proc.isSlotBActive() ? "B to A." : "A to B."));
+    };
 
     prevButton.onClick = [this] {
         proc.prevSample();
@@ -713,9 +718,9 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     playButton.onClick      = [this] { proc.triggerPreview(); setStatus ("Preview triggered."); };
     resetButton.onClick     = [this] { proc.resetEdits(); waveform.rebuild(); setStatus ("Sound-design edits reset."); };
     randomButton.onClick    = [this] { proc.randomizePreChorus(); waveform.rebuild(); setStatus ("Sound-design parameters randomized."); };
-    regenSeedButton.onClick = [this] { proc.regenerateSeed(); waveform.rebuild(); setStatus ("Deterministic swarm seed regenerated."); };
+    regenSeedButton.onClick = [this] { proc.regenerateSeed(); setStatus ("Swarm seed regenerated: " + juce::String ((int) proc.param (IDs::seed)) + "."); };
     optionsButton.onClick   = [this] { showOptionsMenu(); };
-    helpButton.onClick      = [this] { help.setVisible (true); setStatus ("Help opened."); };
+    helpButton.onClick      = [this] { openHelp(); };
 
     exportButton.onClick = [this] {
         chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
@@ -756,16 +761,47 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (seqCombo);
     seqAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sequence, seqCombo);
 
-    presetCombo.setTextWhenNothingSelected ("FACTORY PRESETS");
-    presetCombo.addItemList (PreChorusProcessor::getFactoryPresetNames(), 1);
+    presetCombo.setTextWhenNothingSelected ("PRESETS");
+    refreshPresetMenu();
     addAndMakeVisible (presetCombo);
     presetCombo.onChange = [this] {
-        const int idx = presetCombo.getSelectedItemIndex();
-        if (idx >= 0)
+        const int id = presetCombo.getSelectedId();
+        if (id <= 0) return;
+        if (id <= 100)
         {
-            proc.loadFactoryPreset (idx);
-            waveform.rebuild();
+            proc.loadFactoryPreset (id - 1);
+            lastPresetId = id;
             setStatus ("Preset: " + presetCombo.getText());
+        }
+        else if (id < 900)
+        {
+            const auto f = userPresetFiles[id - 101];
+            juce::String err;
+            if (proc.loadUserPreset (f, err)) { lastPresetId = id; setStatus ("User preset: " + f.getFileNameWithoutExtension()); }
+            else { presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification); setStatus ("Preset load failed: " + err); }
+        }
+        else
+        {
+            presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification);
+            const bool saving = (id == 900);
+            auto folder = PreChorusProcessor::getUserPresetFolder();
+            folder.createDirectory();
+            chooser = std::make_unique<juce::FileChooser> (saving ? "Save PreChorus Preset" : "Load PreChorus Preset", folder, "*.pcpreset");
+            const int chooserFlags = saving ? (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting)
+                                     : (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles);
+            chooser->launchAsync (chooserFlags, [this, saving] (const juce::FileChooser& fc) {
+                auto f = fc.getResult();
+                if (f == juce::File()) return;
+                juce::String err;
+                if (saving)
+                {
+                    f = f.withFileExtension ("pcpreset");
+                    setStatus (proc.saveUserPreset (f, err) ? "Saved preset: " + f.getFileNameWithoutExtension() : "Preset save failed: " + err);
+                }
+                else
+                    setStatus (proc.loadUserPreset (f, err) ? "User preset: " + f.getFileNameWithoutExtension() : "Preset load failed: " + err);
+                refreshPresetMenu();
+            });
         }
     };
 
@@ -774,15 +810,17 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (captureButton);
     addAndMakeVisible (lockButton);
     armButton.onClick = [this] {
-        if (proc.isCaptureArmed()) proc.stopCapture();
-        else proc.armCapture();
+        if (proc.isCaptureArmed() || proc.isCapturing()) { proc.stopCapture(); setStatus ("Capture stopped."); }
+        else { proc.armCapture(); setStatus ("Capture armed: waiting for input (" + captureCombo.getText() + ")."); }
     };
     captureButton.onClick = [this] {
+        const bool wasRecording = proc.isCapturing();
         proc.triggerManualCapture();
-        waveform.rebuild();
+        setStatus (wasRecording ? "Capture stopped; take stored in the history." : "Recording live input (click again to stop, max 8 s).");
     };
     lockButton.onClick = [this] {
         proc.setCaptureLock (! proc.isCaptureLocked());
+        setStatus (proc.isCaptureLocked() ? "Active take locked: new captures go to the next free slot." : "Capture slot unlocked.");
     };
 
     captureCombo.addItemList (juce::StringArray { "Threshold", "1/16 Note", "1/8 Note", "1/4 Beat", "1/2 Note", "1 Bar", "2 Bars", "Manual" }, 1);
@@ -794,7 +832,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
         historySlotButtons[(size_t) i].setButtonText (juce::String (i + 1));
         historySlotButtons[(size_t) i].onClick = [this, i] {
             proc.selectCaptureSlot (i);
-            waveform.rebuild();
+            setStatus ("Capture slot " + juce::String (i + 1) + (proc.isSlotFilled (i) ? " selected." : " selected (empty: Live Capture uses the loaded sample)."));
         };
         addAndMakeVisible (historySlotButtons[(size_t) i]);
     }
@@ -804,6 +842,8 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     revConvergeAtt= std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::revConverge, revConvergeToggle);
     alignAtt      = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt       = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync,  syncToggle);
+    keytrackAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::keytrack, keytrackToggle);
+    addAndMakeVisible (keytrackToggle);
 
     addAndMakeVisible (freezeToggle);
     addAndMakeVisible (revConvergeToggle);
@@ -877,12 +917,67 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kDryReplace = &makeKnob (IDs::dryReplace, "REPLACE");
     kDucking    = &makeKnob (IDs::ducking,    "DUCKING");
     kThresh     = &makeKnob (IDs::thresh,     "THRESH");
+    kStutter    = &makeKnob (IDs::stutter,    "STUTTER");
 
     // Knobs - Pitch & Volume
     kPitch      = &makeKnob (IDs::pitch,      "PITCH");
     kVolStart   = &makeKnob (IDs::volStart,   "START");
     kVolEnd     = &makeKnob (IDs::volEnd,     "END");
     kVolTension = &makeKnob (IDs::volTension, "TENSION");
+    kTrimStart  = &makeKnob (IDs::trimStart,  "TRIM IN");
+    kTrimEnd    = &makeKnob (IDs::trimEnd,    "TRIM OUT");
+    kStutter->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
+
+    // Knob tooltips describe the audible result (spec 7.1), not just the label.
+    const std::pair<Knob*, const char*> knobTips[] = {
+        { kVoiceCount, "Number of rendered ensemble voices (1-32). More voices = denser, wider swarm." },
+        { kVoiceDensity, "When voices join the build: negative = most voices enter early, positive = an avalanche near the hit." },
+        { kVoiceAge, "Darkens the earliest voices with tape-style roll-off so the swarm brightens as it approaches the hit." },
+        { kProgReveal, "Early voices play short fragments; higher values reveal more of the phrase only in later voices." },
+        { kHumanize, "Random micro-timing (up to 15 ms) and pitch drift per voice for a more organic ensemble." },
+        { kGrainSize, "Grain length in milliseconds for the Granular Cloud character (10-200 ms)." },
+        { kMacro, "Master convergence amount: scales time, pitch, width and tone convergence together." },
+        { kTimeSpread, "How far before the hit (in seconds) the earliest voices begin." },
+        { kTimeConverge, "How tightly voice start times pull together toward the hit." },
+        { kPitchSpread, "Range of random pitch offsets (semitones) the voices start from." },
+        { kDetune, "Fine detune spread in cents for chorus thickness." },
+        { kPitchConverge, "How strongly the scattered pitches glide into unison at the hit." },
+        { kPanSpread, "Initial stereo spread of the voices." },
+        { kPanConverge, "Width motion: positive collapses to mono centre at the hit, negative blooms outward." },
+        { kToneConverge, "Scattered bright/dark voice colours converge to the full target spectrum." },
+        { kFocus, "Delays convergence then snaps it into a laser-focused point right before the hit." },
+        { kAttraction, "Shape of the pull toward unison: higher values hold the scatter longer before converging." },
+        { kTurbulence, "Adds fluttering pitch jitter to the voices as they move." },
+        { kOvershoot, "Spring-like pitch overshoot past unison near the hit." },
+        { kOrbit, "Voices circle around the stereo field during the build." },
+        { kDistance, "Voices start far away (quieter, more diffuse) and rush upfront and dry at the hit." },
+        { kTail, "Swell length in seconds when SYNC is off (0.1-8 s)." },
+        { kShape, "Swell volume curve: negative = fast fade-in, positive = slow build that surges at the end." },
+        { kTone, "Low-pass cutoff for the swarm (Hz)." },
+        { kBass, "High-pass cutoff for the swarm (Hz) to clear low-end mud." },
+        { kResonance, "Q of the Tone and Bass Cut filters: higher values add a resonant peak." },
+        { kTilt, "One-knob spectral tilt around 1 kHz: left = darker/warmer, right = brighter." },
+        { kPresence, "10 kHz shelf lift for vocal clarity." },
+        { kAir, "Saturated high-frequency exciter (8.5 kHz+) on the swarm and the target hit." },
+        { kSpace, "Diffuse stereo echo wash around the swarm." },
+        { kDrive, "Soft-clip saturation for harmonics and grit." },
+        { kTransients, "Negative softens attacks and sibilance; positive emphasizes transient punch." },
+        { kFormant, "Shifts the swarm's vocal timbre up/down (semitones) for a smaller or larger sounding choir." },
+        { kMonoBass, "Below this frequency the swarm is made mono for solid club low end (Hz)." },
+        { kDry, "Level of the dry input and of the target hit after the swell." },
+        { kWet, "Level of the swarm build-up." },
+        { kDryReplace, "Fades out the original target hit so the swarm replaces it (1 = no hit)." },
+        { kDucking, "Ducks the swarm whenever the live input is loud, keeping vocals/drums clear." },
+        { kThresh, "Input level (dBFS) that starts and ends Threshold auto-capture." },
+        { kStutter, "Build Stutter: rhythmic gate in the second half of the swell, accelerating 1/8 > 1/16 > 1/32 into the hit." },
+        { kPitch, "Pitch sweep over the whole rendered result: right rises, left falls (range set by RANGE)." },
+        { kVolStart, "Volume envelope level at the start (also draggable on the waveform)." },
+        { kVolEnd, "Volume envelope level at the end (also draggable on the waveform)." },
+        { kVolTension, "Curve of the volume envelope between start and end." },
+        { kTrimStart, "Crops the start of the rendered result (fraction of full length)." },
+        { kTrimEnd, "Crops the end of the rendered result (fraction of full length)." } };
+    for (auto& [k, tip] : knobTips)
+        k->slider.setTooltip (juce::String (tip) + " Double-click to reset.");
 
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
     kMacro->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
@@ -896,7 +991,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     resetButton.setTooltip ("Reset the main sound-design edits without replacing the loaded or captured source.");
     randomButton.setTooltip ("Randomize musical sound-design parameters while preserving the source. Shortcut: R.");
     regenSeedButton.setTooltip ("Generate a new deterministic swarm seed without changing the other controls. Shortcut: G.");
-    optionsButton.setTooltip ("Open interface options, including the global tooltip switch.");
+    optionsButton.setTooltip ("Interface options: tooltips and window size.");
     helpButton.setTooltip ("Open workflow and control help. Shortcut: H or F1.");
     armButton.setTooltip ("Arm live capture. Click again to cancel the armed state.");
     captureButton.setTooltip ("Start or stop manual live capture for the active history slot.");
@@ -908,17 +1003,30 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     postReleaseCombo.setTooltip ("Choose what the swarm does after the target impact.");
     charCombo.setTooltip ("Choose the per-voice character/color model.");
     seqCombo.setTooltip ("Restrict automatic target triggering to the selected beat/bar cycle.");
-    presetCombo.setTooltip ("Load a factory starting point without replacing the current source audio.");
+    presetCombo.setTooltip ("Factory and user presets, plus Save/Load. Presets never replace the source audio or capture history.");
     freezeToggle.setTooltip ("Hold convergence at its current spread to create a sustained cloud.");
     revConvergeToggle.setTooltip ("Invert the motion so voices move from coherent toward scattered.");
-    alignToggle.setTooltip ("Use host timing/latency alignment so the target lands on the intended note or downbeat.");
+    alignToggle.setTooltip ("Reports the swell length as latency and delays the dry input to match, so the target hit lands exactly on the MIDI note.");
+    keytrackToggle.setTooltip ("MIDI notes transpose the swarm (C4 = original pitch) so it can be played like an instrument.");
+    abButton.setTooltip ("Switch between two sound-design snapshots (A/B compare). Shortcut: B.");
+    abCopyButton.setTooltip ("Copy the current A/B slot's settings into the other slot.");
+    pitchTension.setTooltip ("Pitch sweep curve: drag up/down to bend, double-click to reset to linear.");
+    waveform.setTooltip ("Rendered result (swarm + amber target hit). Drag the white volume points; click elsewhere to preview.");
+    dragPad.setTooltip ("Drag onto a DAW track to drop the rendered result as a 24-bit WAV.");
+    for (int i = 0; i < 8; ++i)
+        historySlotButtons[(size_t) i].setTooltip ("Select capture history slot " + juce::String (i + 1) + ". Filled slots are tinted.");
+
     syncToggle.setTooltip ("Use host tempo divisions for the swell length.");
     syncCombo.setTooltip ("Select the tempo-synced swell duration.");
     rangeCombo.setTooltip ("Set the maximum pitch sweep range.");
     reducedMotionToggle.setTooltip ("Stops decorative orbit and transient-flash animation while retaining the audio meters and functional waveform updates.");
 
     addChildComponent (help);
-    setSize (1240, 840);
+    setResizable (true, true);
+    setResizeLimits (kBaseW * 6 / 10, kBaseH * 6 / 10, kBaseW * 2, kBaseH * 2);
+    if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) kBaseW / (double) kBaseH);
+    if (proc.uiWidth >= kBaseW * 6 / 10) setSize (proc.uiWidth, juce::roundToInt (proc.uiWidth * (double) kBaseH / kBaseW));
+    else setSize (kBaseW * 85 / 100, kBaseH * 85 / 100);
     setWantsKeyboardFocus (true);
     startTimerHz (15);
     timerCallback();
@@ -935,7 +1043,7 @@ PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const 
     auto k = std::make_unique<Knob>();
     auto& s = k->slider;
     s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 62, 13);
+    s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 52, 13);
     s.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
     s.setColour (juce::Slider::rotarySliderFillColourId, PCColours::accent);
     addAndMakeVisible (s);
@@ -979,6 +1087,24 @@ void PreChorusEditor::timerCallback()
     const int confPct = juce::roundToInt (conf * 100.0f);
     confidenceLabel.setText ("TARGET CONFIDENCE: " + juce::String (confPct) + "%", juce::dontSendNotification);
     confidenceLabel.setColour (juce::Label::textColourId, confPct > 90 ? PCColours::neon : (confPct > 70 ? PCColours::hitCol : PCColours::recCol));
+
+    // Post-processing stereo output peak (spec 7.4): CLIP at or above 0 dBFS.
+    const float outputPeak = proc.getOutputLevel();
+    if (outputPeak >= 1.0f)
+    {
+        outputLabel.setText ("OUT CLIP +" + juce::String (juce::Decibels::gainToDecibels (outputPeak), 1) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, PCColours::recCol);
+    }
+    else
+    {
+        const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
+        outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
+        outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
+    }
+
+    abButton.setButtonText (proc.isSlotBActive() ? "B" : "A");
+    abCopyButton.setButtonText (proc.isSlotBActive() ? "B>A" : "A>B");
+    playButton.setButtonText (proc.isPreviewPlaying() ? "PLAYING" : "PLAY");
 
     const int currentSlot = proc.getActiveCaptureSlot();
     for (int i = 0; i < 8; ++i)
@@ -1038,6 +1164,11 @@ void PreChorusEditor::showOptionsMenu()
     juce::PopupMenu menu;
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
+    menu.addItem (2, "Reduced motion", true, reducedMotionToggle.getToggleState());
+    juce::PopupMenu sizes;
+    for (int pct : { 60, 75, 85, 100, 125, 150 })
+        sizes.addItem (1000 + pct, juce::String (pct) + "%", true, std::abs (getWidth() - kBaseW * pct / 100) < 4);
+    menu.addSubMenu ("Window size", sizes);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&optionsButton),
                         [this] (int result)
                         {
@@ -1047,12 +1178,52 @@ void PreChorusEditor::showOptionsMenu()
                                 applyTooltipSetting();
                                 setStatus (tooltipsEnabled ? "Tooltips enabled." : "Tooltips disabled.");
                             }
+                            else if (result == 2)
+                            {
+                                reducedMotionToggle.setToggleState (! reducedMotionToggle.getToggleState(), juce::sendNotification);
+                            }
+                            else if (result > 1000)
+                            {
+                                const int pct = result - 1000;
+                                setSize (kBaseW * pct / 100, kBaseH * pct / 100);
+                                setStatus ("Window size " + juce::String (pct) + "%.");
+                            }
                         });
+}
+
+void PreChorusEditor::refreshPresetMenu()
+{
+    presetCombo.clear (juce::dontSendNotification);
+    auto factory = PreChorusProcessor::getFactoryPresetNames();
+    presetCombo.addSectionHeading ("Factory");
+    for (int i = 0; i < factory.size(); ++i) presetCombo.addItem (factory[i], i + 1);
+
+    userPresetFiles = PreChorusProcessor::getUserPresetFolder().findChildFiles (juce::File::findFiles, false, "*.pcpreset");
+    userPresetFiles.sort();
+    if (userPresetFiles.size() > 700) userPresetFiles.removeRange (700, userPresetFiles.size());
+    if (! userPresetFiles.isEmpty())
+    {
+        presetCombo.addSectionHeading ("User");
+        for (int i = 0; i < userPresetFiles.size(); ++i) presetCombo.addItem (userPresetFiles[i].getFileNameWithoutExtension(), 101 + i);
+    }
+    presetCombo.addSeparator();
+    presetCombo.addItem ("Save User Preset...", 900);
+    presetCombo.addItem ("Load Preset File...", 901);
+    presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification);
+}
+
+void PreChorusEditor::openHelp()
+{
+    help.setVisible (true);
+    help.toFront (true);
+    help.grabKeyboardFocus();
+    setStatus ("Help opened (Esc or click to close).");
 }
 
 void PreChorusEditor::paint (juce::Graphics& g)
 {
-    juce::ColourGradient grad (PCColours::bg.brighter (0.05f), 0.0f, 0.0f, PCColours::bg, 0.0f, (float) getHeight(), false);
+    g.addTransform (juce::AffineTransform::scale ((float) getWidth() / (float) kBaseW));
+    juce::ColourGradient grad (PCColours::bg.brighter (0.05f), 0.0f, 0.0f, PCColours::bg, 0.0f, (float) kBaseH, false);
     g.setGradientFill (grad);
     g.fillAll();
 
@@ -1060,7 +1231,7 @@ void PreChorusEditor::paint (juce::Graphics& g)
     g.setColour (col.withAlpha (0.04f));
     g.fillEllipse (-120.0f, -140.0f, 480.0f, 360.0f);
     g.setColour (PCColours::hitCol.withAlpha (0.035f));
-    g.fillEllipse ((float) getWidth() - 340.0f, (float) getHeight() - 280.0f, 480.0f, 340.0f);
+    g.fillEllipse ((float) kBaseW - 340.0f, (float) kBaseH - 280.0f, 480.0f, 340.0f);
 
     for (auto& gr : groups)
     {
@@ -1088,9 +1259,13 @@ void PreChorusEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer_l
 
 void PreChorusEditor::resized()
 {
-    help.setBounds (getLocalBounds());
+    // Lay out in fixed base coordinates, then scale every child uniformly (resizable UI).
+    const float scale = (float) getWidth() / (float) kBaseW;
+    proc.uiWidth = getWidth(); proc.uiHeight = getHeight();
+    const juce::Rectangle<int> base (0, 0, kBaseW, kBaseH);
+    help.setBounds (base);
     groups.clear();
-    auto area = getLocalBounds().reduced (12);
+    auto area = base.reduced (12);
 
     // 1. Header Row
     auto header = area.removeFromTop (38);
@@ -1101,6 +1276,10 @@ void PreChorusEditor::resized()
     header.removeFromRight (4);
     optionsButton.setBounds (header.removeFromRight (70).reduced (0, 5));
     header.removeFromRight (6);
+    abCopyButton.setBounds (header.removeFromRight (40).reduced (0, 5));
+    header.removeFromRight (3);
+    abButton.setBounds (header.removeFromRight (28).reduced (0, 5));
+    header.removeFromRight (6);
 
     sourceModeCombo.setBounds (header.removeFromRight (110).reduced (0, 5));
     header.removeFromRight (6);
@@ -1108,7 +1287,7 @@ void PreChorusEditor::resized()
     charCombo.setBounds (header.removeFromRight (116).reduced (0, 5));
     header.removeFromRight (6);
 
-    presetCombo.setBounds (header.removeFromRight (128).reduced (0, 5));
+    presetCombo.setBounds (header.removeFromRight (150).reduced (0, 5));
     header.removeFromRight (6);
 
     auto browser = header.withTrimmedLeft (12);
@@ -1162,7 +1341,8 @@ void PreChorusEditor::resized()
     regenSeedButton.setBounds (trans.removeFromLeft (56));  trans.removeFromLeft (10);
 
     freezeToggle.setBounds (trans.removeFromLeft (70));     trans.removeFromLeft (4);
-    revConvergeToggle.setBounds (trans.removeFromLeft (82));trans.removeFromLeft (8);
+    revConvergeToggle.setBounds (trans.removeFromLeft (82));trans.removeFromLeft (4);
+    keytrackToggle.setBounds (trans.removeFromLeft (84));   trans.removeFromLeft (8);
 
     syncCombo.setBounds (trans.removeFromRight (84));      trans.removeFromRight (4);
     syncToggle.setBounds (trans.removeFromRight (56));     trans.removeFromRight (4);
@@ -1204,25 +1384,30 @@ void PreChorusEditor::resized()
 
     // Row B: TONE SHAPING & COLOR, MIX & DUCK, PITCH & ENVELOPE
     const int wB = rowB.getWidth();
-    layoutKnobs (group (rowB, (int) (wB * 0.54f), "TONE SHAPING, ACOUSTICS & COLOR"),
+    layoutKnobs (group (rowB, (int) (wB * 0.49f), "TONE SHAPING, ACOUSTICS & COLOR"),
                  { kTail, kShape, kTone, kBass, kResonance, kTilt, kPresence, kAir, kSpace, kDrive, kTransients, kFormant, kMonoBass });
 
-    auto mixGrp = group (rowB, (int) (wB * 0.26f), "MIX, CAPTURE & DUCK");
+    auto mixGrp = group (rowB, (int) (wB * 0.255f), "MIX, CAPTURE, DUCK & STUTTER");
     {
         auto rightRelease = mixGrp.removeFromRight (94);
         postReleaseCombo.setBounds (rightRelease.withSizeKeepingCentre (90, 22));
-        layoutKnobs (mixGrp, { kDry, kWet, kDryReplace, kDucking, kThresh });
+        layoutKnobs (mixGrp, { kDry, kWet, kDryReplace, kDucking, kThresh, kStutter });
     }
 
-    auto pitchArea = group (rowB, rowB.getWidth(), "PITCH & VOLUME");
+    auto pitchArea = group (rowB, rowB.getWidth(), "PITCH, VOLUME & TRIM");
     {
         auto right = pitchArea.removeFromRight (60);
         rangeLabel.setBounds (right.removeFromTop (11));
         rangeCombo.setBounds (right.removeFromTop (20).reduced (2, 0));
         right.removeFromTop (2);
         pitchTension.setBounds (right.withSizeKeepingCentre (50, juce::jmin (50, right.getHeight())));
-        layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension });
+        layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension, kTrimStart, kTrimEnd });
     }
+
+    const auto t = juce::AffineTransform::scale (scale);
+    for (auto* c : getChildren())
+        if (c != resizableCorner.get() && dynamic_cast<juce::TooltipWindow*> (c) == nullptr)
+            c->setTransform (t);
 }
 
 bool PreChorusEditor::isInterestedInFileDrag (const juce::StringArray& files)
@@ -1261,6 +1446,11 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    if (key.getKeyCode() == juce::KeyPress::escapeKey && help.isVisible())
+    {
+        help.setVisible (false);
+        return true;
+    }
     if (key.getKeyCode() == juce::KeyPress::escapeKey)
     {
         proc.stopAll();
@@ -1279,14 +1469,17 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
     if (ch == 'g')
     {
         proc.regenerateSeed();
-        waveform.rebuild();
-        setStatus ("Deterministic swarm seed regenerated.");
+        setStatus ("Swarm seed regenerated: " + juce::String ((int) proc.param (IDs::seed)) + ".");
+        return true;
+    }
+    if (ch == 'b')
+    {
+        abButton.triggerClick();
         return true;
     }
     if (ch == 'h' || key.getKeyCode() == juce::KeyPress::F1Key)
     {
-        help.setVisible (true);
-        setStatus ("Help opened.");
+        openHelp();
         return true;
     }
 

@@ -55,13 +55,18 @@ Write-Host "Configuring with generator '$gen' (downloads JUCE on first run) ..."
 cmake -S $root -B "$root\build" -G $gen -A x64
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 Write-Host "Building ..."
-cmake --build "$root\build" --config Release --target PreChorus_VST3 PreChorus_Standalone
+cmake --build "$root\build" --config Release --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
 $dst = "C:\Program Files\Common Files\VST3\PreChorus.vst3"
 $src = Get-ChildItem -Path "$root\build" -Recurse -Directory -Filter "PreChorus.vst3" | Select-Object -First 1
 if ($src) { Copy-Item $src.FullName $dst -Recurse -Force }
+$clapDir = "C:\Program Files\Common Files\CLAP"
+New-Item -ItemType Directory -Force $clapDir | Out-Null
+$clap = Get-ChildItem -Path "$root\build" -Recurse -File -Filter "PreChorus.clap" | Select-Object -First 1
+if ($clap) { Copy-Item $clap.FullName "$clapDir\PreChorus.clap" -Force }
 Write-Host ""
 Write-Host "DONE.  VST3: $dst"
+Write-Host "       CLAP: $clapDir\PreChorus.clap"
 Write-Host "Standalone test app: $root\build\PreChorus_artefacts\Release\Standalone\PreChorus.exe"
 Read-Host "Press Enter to close"

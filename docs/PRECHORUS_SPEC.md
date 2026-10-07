@@ -1,7 +1,7 @@
 # PreChorus Product Specification
 
 **Status:** Active implementation specification  
-**Version:** 1.2  
+**Version:** 1.3 (product release v0.0.1 beta)  
 **Product:** PreChorus  
 **Shared baseline:** [Circuit Drift Labs Shared Audio Plugin Standard](standards/CDL_PLUGIN_BASELINE.md)
 
@@ -22,7 +22,7 @@ The core design goal is fast sound design with deterministic repeatability: user
 | Instrument plug-in | Not applicable | Does not synthesize independent note voices |
 | MIDI effect | Not applicable | Does not transform MIDI output |
 
-Formats: VST3, AU, Standalone.  
+Formats: VST3, CLAP, Standalone (Windows x64 release); AU is built on macOS only and is not part of the v0.0.1 beta.  
 Primary build architecture: host-native architecture provided by JUCE/CMake toolchain.  
 Main output: stereo.  
 Main input: disabled, mono, or stereo.  
@@ -37,6 +37,8 @@ Loaded audio MUST support WAV, AIFF/AIF, FLAC, MP3, and OGG when the JUCE build 
 Loading a file while Live Capture is selected MUST switch to Loaded Sample so the user's load action has an audible result.
 
 Capture history MUST provide eight slots, an active slot, and a lock state. Locking a slot MUST prevent accidental overwrite of the protected take.
+
+A finished capture switches Loaded Sample to Live Capture so the new take is audible (documented dependency, mirrors the load rule above). Capture recording runs on the audio thread; committing a take to a history slot happens on the message thread.
 
 Capture modes MUST include Threshold, 1/16, 1/8, 1/4, 1/2, 1 Bar, 2 Bars, and Manual.
 
@@ -66,7 +68,13 @@ Output samples MUST remain finite for valid parameter states.
 
 ## 6. Transport, triggering, and preview
 
-Any MIDI note-on MUST be able to trigger the swarm. Velocity SHOULD influence playback gain.
+Any MIDI note-on MUST be able to trigger the swarm at the note's sample offset. Velocity SHOULD influence playback gain of both the swarm and the target hit.
+
+When **Keytrack** (`keytrack`) is on, the note number transposes playback by resampling (C4/60 = original); the time scale changes with the pitch, so PDC alignment applies to untransposed playback only.
+
+When **Hit on note (PDC)** (`align`) is on, the plug-in reports the hit position as latency (max 20 s) and delays the dry input by the same amount.
+
+**Build Stutter** (`stutter`, 0–1, default 0) gates the second half of the swell at 1/8, then 1/16 (from 50%), then 1/32 (from 80%) notes at host tempo with 2 ms fades; the amount sets gate depth.
 
 The PLAY action and Spacebar shortcut MUST trigger the same preview path.
 
@@ -74,7 +82,8 @@ The editor MUST also provide:
 - Escape to stop active preview playback.
 - R to randomize the current sound-design parameters.
 - G to regenerate only the deterministic seed.
-- H or F1 to open the help overlay.
+- H or F1 to open the help overlay (Esc closes it).
+- B to switch the A/B comparison slot.
 
 Keyboard shortcuts MUST be listed in the help overlay and in control tooltips where relevant.
 
@@ -129,7 +138,13 @@ Host state is authoritative for project recall. APVTS parameters MUST be restore
 
 The state additionally stores the selected external source path, active capture slot, and capture lock. If the external source file is missing at restore time, PreChorus MUST remain stable and retain parameter state.
 
-Factory presets MUST alter sound-design parameters only. They MUST NOT replace loaded audio or overwrite capture history.
+Factory presets MUST alter sound-design parameters only. They MUST NOT replace loaded audio or overwrite capture history. Each factory preset first restores sound-design defaults (excluding seed, mix levels and the pitch/volume envelopes) so no value leaks from a previous preset.
+
+State carries `stateVersion` (currently 2). State with a different root type or a newer version is ignored and the current state is kept. Restore never changes the saved Source Mode. The editor size is stored as a view preference.
+
+**A/B comparison:** two in-memory snapshots of the sound-design parameters. Switching stores the current slot and recalls the other; the first switch copies the current sound. Snapshots are not saved with the session.
+
+**User presets:** `.pcpreset` XML (`PRECHORUS_PRESET`, `schema` = 1, one `SNAPSHOT` child of parameter values) in `Documents/Circuit Drift Labs/PreChorus/Presets`. Loading validates root type, schema, size (≤ 256 KB) and that values are finite numbers, then clamps them to range; on failure the current sound is kept and the status bar explains why.
 
 ## 9. File export
 
@@ -150,25 +165,24 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 | Product profile declaration | Implemented | This document |
 | Stable parameter IDs | Implemented | IDs namespace/APVTS |
 | Host automation attachments | Implemented | JUCE APVTS attachments |
-| Tooltips | Implemented in v1.1 | Product-specific help text |
-| Keyboard discoverability | Implemented in v1.1 | Space, Esc, R, G, H/F1 |
+| Tooltips | Implemented in v1.3 | Per-control audible-result text; global on/off in OPTIONS |
+| Keyboard discoverability | Implemented in v1.3 | Space, Esc, R, G, B, H/F1 |
 | Reduced motion option | Implemented in v1.2 | Decorative orbit/flash can be disabled |
 | State restore | Implemented | APVTS + source path/slot/lock |
-| Presets | Implemented | 10 factory presets |
-| A/B comparison | Planned | Useful future workflow feature |
+| Presets | Implemented | 10 factory presets + versioned user presets |
+| A/B comparison | Implemented in v1.3 | Sound-design snapshots |
+| Resizable UI | Implemented in v1.3 | 60–200%, fixed aspect ratio |
+| Latency reporting | Implemented | Hit position when PDC on; dry path delayed to match |
 | Offline WAV export | Implemented | 24-bit stereo WAV |
 | Unsupported bus rejection | Implemented | Stereo output; disabled/mono/stereo input |
-| Automated unit tests | Planned | Add parameter/state/DSP regression target |
+| Automated unit tests | Partial | pluginval strictness 8 (VST3) and clap-validator pass on Linux builds; product unit tests planned |
 | Output peak/clip metering | Implemented in v1.2 | Stereo post-processing peak in dBFS |
-| CI build matrix | Partial | Windows VST3/Standalone build gate added; macOS remains planned |
+| CI build matrix | Partial | Windows VST3/CLAP/Standalone build gate + tagged release packaging; macOS remains planned |
 | Accessibility audit | Planned | Focus order and reduced-motion pass remains |
 
 ## 12. Future usability work
 
 Prioritized follow-up items:
-1. A/B state comparison that snapshots parameter state without duplicating source media.
-2. User preset save/load with schema versioning and validation.
-3. Searchable preset browser and favorites.
-4. Resizable/scalable UI with a compact laptop layout.
-5. macOS AU/Standalone CI validation.
-6. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
+1. Searchable preset browser and favorites.
+2. macOS AU/Standalone CI validation.
+3. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
