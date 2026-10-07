@@ -248,6 +248,7 @@ private:
 
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;
+    std::vector<std::shared_ptr<RenderedSample>> retiredRendered; // freed on the message thread only
 
     double hostSampleRate = 44100.0;
     std::atomic<double> hostBpm { 120.0 };
@@ -268,5 +269,6 @@ private:
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
 
+    friend class PreChorusCoreTests;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PreChorusProcessor)
 };

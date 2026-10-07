@@ -34,10 +34,12 @@ All binaries use the static MSVC runtime (no Visual C++ redistributable needed).
 - Dimension character used an already-modified pan value; Lo-Fi Choral lacked the specified sample-rate reduction; Analog Ensemble lacked the specified pitch drift.
 - Target Sequence used the block start and assumed 4/4; it now uses each note's position and the host time signature.
 - Mono input left the right channel undefined; non-finite input/output samples are now sanitized.
+- Input meter / ducking / threshold capture now read both input channels; renders are never freed on the audio thread.
 - Malformed or future-version session state is rejected safely; state now carries a version.
 - Tooltips now describe each knob's audible result; help documents source modes, export, drag-to-DAW, and version/site.
 
 ## Validation (recorded)
+- Regression suite `Tests/PreChorusTests.cpp`: 15 tests, all passing (Linux); also run in Windows CI.
 - pluginval (Linux build, strictness 8, in-process): **SUCCESS** for VST3.
 - clap-validator 0.3.2 (Linux build): 21 tests — 18 passed, 0 failed, 3 skipped.
 - Windows VST3/CLAP/Standalone: built by GitHub Actions (`release.yml`). Not yet hand-tested in a Windows DAW — please report issues.

@@ -175,7 +175,7 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 | Latency reporting | Implemented | Hit position when PDC on; dry path delayed to match |
 | Offline WAV export | Implemented | 24-bit stereo WAV |
 | Unsupported bus rejection | Implemented | Stereo output; disabled/mono/stereo input |
-| Automated unit tests | Partial | pluginval strictness 8 (VST3) and clap-validator pass on Linux builds; product unit tests planned |
+| Automated unit tests | Implemented | `Tests/PreChorusTests.cpp` (15 regression tests: buses, capture, metering, tail, render publication, state, A/B, presets, PDC, MIDI timing, keytrack/stutter); run by CI. pluginval strictness 8 (VST3) and clap-validator also pass |
 | Output peak/clip metering | Implemented in v1.2 | Stereo post-processing peak in dBFS |
 | CI build matrix | Partial | Windows VST3/CLAP/Standalone build gate + tagged release packaging; macOS remains planned |
 | Accessibility audit | Planned | Focus order and reduced-motion pass remains |
@@ -185,4 +185,4 @@ Rendering and file loading may occur outside the realtime callback. Shared rende
 Prioritized follow-up items:
 1. Searchable preset browser and favorites.
 2. macOS AU/Standalone CI validation.
-3. Automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.
+3. Broader automated JUCE unit tests for parameter ranges, state restore, file-loading edge cases, and deterministic rendering.

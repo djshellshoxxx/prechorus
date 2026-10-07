@@ -55,8 +55,12 @@ Write-Host "Configuring with generator '$gen' (downloads JUCE on first run) ..."
 cmake -S $root -B "$root\build" -G $gen -A x64
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 Write-Host "Building ..."
-cmake --build "$root\build" --config Release --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone
+cmake --build "$root\build" --config Release --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone PreChorusTests
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+Write-Host "Running regression tests ..."
+ctest --test-dir "$root\build" -C Release --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw "Regression tests failed" }
 
 $dst = "C:\Program Files\Common Files\VST3\PreChorus.vst3"
 $src = Get-ChildItem -Path "$root\build" -Recurse -Directory -Filter "PreChorus.vst3" | Select-Object -First 1

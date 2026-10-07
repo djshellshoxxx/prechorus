@@ -478,6 +478,9 @@ void PreChorusProcessor::timerCallback()
         }
     }
     commitFinishedCapture();
+    // Drop retired renders only once the audio thread no longer holds them.
+    retiredRendered.erase (std::remove_if (retiredRendered.begin(), retiredRendered.end(),
+                                           [] (const auto& r) { return r.use_count() == 1; }), retiredRendered.end());
     if (dirty.exchange (false))
     {
         render();
@@ -489,9 +492,21 @@ void PreChorusProcessor::timerCallback()
 
 // UI-thread requests are posted as commands; the audio thread owns the ring buffer and write
 // position, and the message-thread timer commits finished takes (allocation + lock happen there).
-void PreChorusProcessor::armCapture()           { captureCommand.store (cmdArm); }
-void PreChorusProcessor::triggerManualCapture() { captureCommand.store (cmdManualToggle); }
-void PreChorusProcessor::stopCapture()          { captureCommand.store (cmdCancel); }
+// A take that finished but is not yet committed is flushed first, so re-arming or stopping never loses it.
+void PreChorusProcessor::armCapture()
+{
+    commitFinishedCapture();
+    // Idle -> armed is safe from any thread (the audio thread resets the write position when recording starts).
+    auto expected = CaptureState::idle;
+    if (! captureState.compare_exchange_strong (expected, CaptureState::armed))
+        captureCommand.store (cmdArm);
+}
+void PreChorusProcessor::triggerManualCapture() { commitFinishedCapture(); captureCommand.store (cmdManualToggle); }
+void PreChorusProcessor::stopCapture()
+{
+    if (captureState.load() == CaptureState::done) commitFinishedCapture();
+    else captureCommand.store (cmdCancel);
+}
 
 void PreChorusProcessor::finishCaptureOnAudioThread()
 {
@@ -1168,6 +1183,7 @@ void PreChorusProcessor::render()
     const int latency = juce::jlimit (0, maxLatency, out->hitIndex > 0 ? out->hitIndex : 0);
     {
         juce::SpinLock::ScopedLockType l (renderLock);
+        if (rendered != nullptr) retiredRendered.push_back (rendered);
         rendered = out;
     }
     const int newLatency = param (IDs::align) > 0.5f ? latency : 0;
@@ -1239,7 +1255,9 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     targetConfidence.store (conf);
 
     // Live Input Meter & Sidechain Ducking Follower (fast attack / slower release, per block)
-    const float inPeak = numIn > 0 ? buffer.getMagnitude (0, numSamples) : 0.0f;
+    float inPeak = 0.0f;
+    for (int ch = 0; ch < juce::jmin (numIn, numOut); ++ch)
+        inPeak = juce::jmax (inPeak, buffer.getMagnitude (ch, 0, numSamples));
     inputMeter.store (inPeak);
 
     const float duckAmt = param (IDs::ducking);
