@@ -15,8 +15,8 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build AU VST3 Standalone and tests
-        run: cmake --build build --config Release --target PreChorus_AU PreChorus_VST3 PreChorus_Standalone PreChorusTests --parallel 2
+      - name: Build AU, VST3, CLAP, Standalone and tests
+        run: cmake --build build --config Release --target PreChorus_AU PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone PreChorusTests --parallel 2
 
       - name: Run regression tests
         run: ctest --test-dir build -C Release --output-on-failure
