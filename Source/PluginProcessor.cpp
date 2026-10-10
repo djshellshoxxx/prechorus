@@ -1441,9 +1441,31 @@ void PreChorusProcessor::startVoice (float gain, double rate, int sampleOffset)
     }
     if (best != nullptr)
     {
+        const double r = juce::jlimit (0.125, 8.0, rate);
+
+        // Keytrack alignment: transposing changes playback speed, so the hit would no longer land at the
+        // reported (PDC) latency D. Play from position p0 so the hit arrives exactly D samples after the note:
+        // faster (r > 1): start later by D - H/r; slower (r < 1): start p0 = H - D*r into the swarm.
+        double skip = 0.0;
+        int extraDelay = 0;
+        const int latencyD = reportedLatency.load();
+        if (latencyD > 0 && ! juce::exactlyEqual (r, 1.0))
+        {
+            if (auto rs = getRendered())
+            {
+                const double H = (double) rs->hitIndex;
+                if (H > 0.0)
+                {
+                    const double p0 = H - (double) latencyD * r;
+                    if (p0 >= 0.0) skip = p0;
+                    else extraDelay = (int) std::lround ((double) latencyD - H / r);
+                }
+            }
+        }
+
         best->active = true;
-        best->pos = -(double) juce::jmax (0, sampleOffset) * rate; // negative = starts later in this block
-        best->rate = juce::jlimit (0.125, 8.0, rate);
+        best->pos = -(double) (juce::jmax (0, sampleOffset) + juce::jmax (0, extraDelay)) * r + skip; // negative = starts later in this block
+        best->rate = r;
         best->gain = gain;
         best->id = ++voiceCounter;
     }

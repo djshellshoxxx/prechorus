@@ -535,6 +535,31 @@ public:
             expect (! rep.contains ("secret-folder-name"));
             expect (rep.length() < 8000);
         }
+
+        beginTest ("keytrack keeps the hit on the reported latency for every transposition");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            p.setParam (IDs::align, 1.0f);
+            p.render();
+            auto r = p.getRendered();
+            expect (r != nullptr && r->hitIndex > 1000);
+            const int H = r->hitIndex;
+            expectEquals (p.reportedLatency.load(), H);
+            for (double rate : { 0.25, 0.5, 0.7071, 0.9439, 1.0, 1.0595, 1.5, 2.0, 4.0 })
+            {
+                for (auto& v : p.voices) v.active = false;
+                p.startVoice (1.0f, rate, 0);
+                const auto& v = p.voices[0];
+                expect (v.active);
+                const double samplesToHit = ((double) H - v.pos) / v.rate;
+                expectWithinAbsoluteError (samplesToHit, (double) H, 1.0);
+            }
+            // a note offset inside the block is preserved on top of the alignment
+            for (auto& v : p.voices) v.active = false;
+            p.startVoice (1.0f, 2.0, 100);
+            expectWithinAbsoluteError (((double) H - p.voices[0].pos) / p.voices[0].rate, (double) H + 100.0, 1.0);
+        }
     }
 };
 
