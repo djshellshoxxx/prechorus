@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "../Source/PluginProcessor.h"
+#include "../Source/DemoSource.h"
 
 class PreChorusCoreTests : public juce::UnitTest
 {
@@ -363,6 +364,417 @@ public:
             expect (! p.loadUserPreset (futureVersion, err));
             expectWithinAbsoluteError (p.param (IDs::space), 0.42f, 0.011f);
             futureVersion.deleteFile();
+        }
+
+        beginTest ("demo sources are deterministic, finite and level-safe");
+        {
+            for (int k = 0; k < PCDemo::numKinds; ++k)
+            {
+                auto a = PCDemo::generate (k, 48000.0);
+                auto b = PCDemo::generate (k, 48000.0);
+                expectEquals (a.getNumSamples(), b.getNumSamples());
+                bool same = true, finite = true;
+                for (int i = 0; i < a.getNumSamples(); ++i)
+                {
+                    const float x = a.getSample (0, i);
+                    if (! std::isfinite (x)) finite = false;
+                    if (! juce::exactlyEqual (x, b.getSample (0, i))) same = false;
+                }
+                expect (same);
+                expect (finite);
+                expect (a.getMagnitude (0, a.getNumSamples()) > 0.5f);
+                expect (a.getMagnitude (0, a.getNumSamples()) <= 0.71f);
+            }
+        }
+
+        beginTest ("captured audio and loaded source are embedded in the project and survive a restore");
+        {
+            PreChorusProcessor a;
+            a.prepareToPlay (48000.0, 256);
+            juce::AudioBuffer<float> cap (2, 24000);
+            for (int i = 0; i < cap.getNumSamples(); ++i)
+            {
+                cap.setSample (0, i, 0.5f * std::sin (0.05f * (float) i));
+                cap.setSample (1, i, 0.25f * std::sin (0.031f * (float) i));
+            }
+            {
+                const juce::ScopedLock sl (a.sourceLock);
+                a.captureSlots[3] = cap; a.captureSlotSRs[3] = 48000.0; a.captureSlotFilled[3] = true;
+                a.slotEmbedCache[3].valid = false;
+            }
+            a.setParam (IDs::captureSlot, 3.0f);
+            a.setParam (IDs::sourceMode, 0.0f);          // Live Capture must stay Live Capture
+            a.setParam (IDs::space, 0.37f);
+
+            juce::MemoryBlock blob;
+            a.getStateInformation (blob);
+            expect (blob.getSize() > 1000);
+
+            // repeated saves must not accumulate embedded blobs
+            juce::MemoryBlock blob2;
+            a.getStateInformation (blob2);
+            expect (blob2.getSize() == blob.getSize());
+
+            PreChorusProcessor b;
+            b.prepareToPlay (48000.0, 256);
+            b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (b.isSlotFilled (3));
+            expect (b.isSlotFilled (0));                 // startup chord restored, never embedded
+            expect (! b.isSlotFilled (5));
+            expectEquals ((int) b.param (IDs::sourceMode), 0);
+            expectWithinAbsoluteError (b.param (IDs::space), 0.37f, 0.01f);
+            expectEquals (b.getActiveCaptureSlot(), 3);
+            {
+                const juce::ScopedLock sl (b.sourceLock);
+                expectEquals (b.captureSlots[3].getNumSamples(), 24000);
+                float maxErr = 0.0f;
+                for (int i = 0; i < 24000; ++i)
+                {
+                    maxErr = juce::jmax (maxErr, std::abs (b.captureSlots[3].getSample (0, i) - cap.getSample (0, i)));
+                    maxErr = juce::jmax (maxErr, std::abs (b.captureSlots[3].getSample (1, i) - cap.getSample (1, i)));
+                }
+                expect (maxErr < 1.0e-5f);               // 24-bit FLAC is effectively lossless
+                expectEquals (b.captureSlotSRs[3], 48000.0);
+            }
+            expect (b.getEmbedSkipped() == 0);
+        }
+
+        beginTest ("embedded loaded source restores without the original file");
+        {
+            auto wav = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("prechorus-embed", ".wav", false);
+            {
+                juce::AudioBuffer<float> tone (2, 20000);
+                for (int i = 0; i < 20000; ++i) { tone.setSample (0, i, 0.4f * std::sin (0.07f * (float) i)); tone.setSample (1, i, 0.4f * std::sin (0.07f * (float) i)); }
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::AudioFormatWriter> w (fmt.createWriterFor (new juce::FileOutputStream (wav), 44100.0, 2, 24, {}, 0));
+                expect (w != nullptr);
+                w->writeFromAudioSampleBuffer (tone, 0, 20000);
+            }
+            PreChorusProcessor a;
+            expect (a.loadSampleFile (wav, false, false));
+            juce::MemoryBlock blob;
+            a.getStateInformation (blob);
+            wav.deleteFile();
+
+            PreChorusProcessor b;
+            b.setStateInformation (blob.getData(), (int) blob.getSize());
+            const juce::ScopedLock sl (b.sourceLock);
+            expectEquals (b.loadedBuffer.getNumSamples(), 20000);
+            expectEquals (b.loadedSR, 44100.0);
+            expect (b.loadedBuffer.getMagnitude (0, 20000) > 0.39f);
+        }
+
+        beginTest ("demo source is regenerated (not embedded) and keeps source mode on restore");
+        {
+            PreChorusProcessor a;
+            a.prepareToPlay (44100.0, 256);
+            a.loadDemoSource (1);
+            a.setParam (IDs::sourceMode, 2.0f);
+            juce::MemoryBlock blob;
+            a.getStateInformation (blob);
+            expect (blob.getSize() < 20000);             // nothing audio-sized in the state
+
+            PreChorusProcessor b;
+            b.prepareToPlay (44100.0, 256);
+            b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expectEquals (b.demoKind, 1);
+            expectEquals ((int) b.param (IDs::sourceMode), 2);
+            expect (b.loadedBuffer.getNumSamples() > 1000);
+        }
+
+        beginTest ("corrupt embedded audio is ignored safely and old projects without embeds still load");
+        {
+            PreChorusProcessor a;
+            a.prepareToPlay (44100.0, 256);
+            juce::MemoryBlock blob;
+            a.getStateInformation (blob);
+            auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+            expect (xml != nullptr);
+            auto* embed = xml->getChildByName ("EMBED");
+            expect (embed != nullptr);
+            auto* item = embed->createNewChildElement ("AUDIO");
+            item->setAttribute ("kind", "slot");
+            item->setAttribute ("idx", 2);
+            item->setAttribute ("data", "AAAA!!!not base64 or flac");
+            auto* bad = embed->createNewChildElement ("AUDIO");
+            bad->setAttribute ("kind", "slot");
+            bad->setAttribute ("idx", 99);
+            bad->setAttribute ("data", "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=");
+            juce::MemoryBlock corrupt;
+            juce::AudioProcessor::copyXmlToBinary (*xml, corrupt);
+
+            PreChorusProcessor b;
+            b.prepareToPlay (44100.0, 256);
+            b.setStateInformation (corrupt.getData(), (int) corrupt.getSize());
+            expect (! b.isSlotFilled (2));
+            expect (b.isSlotFilled (0));
+
+            // Old (v0.0.1) state: no EMBED node at all -> existing slots are left alone.
+            xml->deleteAllChildElementsWithTagName ("EMBED");
+            juce::MemoryBlock legacy;
+            juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+            PreChorusProcessor c;
+            c.prepareToPlay (44100.0, 256);
+            { const juce::ScopedLock sl (c.sourceLock); c.captureSlots[4] = juce::AudioBuffer<float> (2, 100); c.captureSlotFilled[4] = true; }
+            c.setStateInformation (legacy.getData(), (int) legacy.getSize());
+            expect (c.isSlotFilled (4));
+        }
+
+        beginTest ("diagnostics report is useful and leaks no folder paths");
+        {
+            PreChorusProcessor a;
+            a.prepareToPlay (48000.0, 512);
+            a.logStatus ("Loaded: vocal.wav");
+            auto wav = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("secret-folder-name").getChildFile ("x.wav");
+            a.currentFile = wav;
+            const auto rep = a.getDiagnosticsReport();
+            expect (rep.contains ("PreChorus diagnostics"));
+            expect (rep.contains ("Block size: 512"));
+            expect (rep.contains ("Loaded: vocal.wav"));
+            expect (rep.contains ("x.wav"));
+            expect (! rep.contains ("secret-folder-name"));
+            expect (rep.length() < 8000);
+        }
+
+        beginTest ("keytrack keeps the hit on the reported latency for every transposition");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            p.setParam (IDs::align, 1.0f);
+            p.render();
+            auto r = p.getRendered();
+            expect (r != nullptr && r->hitIndex > 1000);
+            const int H = r->hitIndex;
+            expectEquals (p.reportedLatency.load(), H);
+            for (double rate : { 0.25, 0.5, 0.7071, 0.9439, 1.0, 1.0595, 1.5, 2.0, 4.0 })
+            {
+                for (auto& v : p.voices) v.active = false;
+                p.startVoice (1.0f, rate, 0);
+                const auto& v = p.voices[0];
+                expect (v.active);
+                const double samplesToHit = ((double) H - v.pos) / v.rate;
+                expectWithinAbsoluteError (samplesToHit, (double) H, 1.0);
+            }
+            // a note offset inside the block is preserved on top of the alignment
+            for (auto& v : p.voices) v.active = false;
+            p.startVoice (1.0f, 2.0, 100);
+            expectWithinAbsoluteError (((double) H - p.voices[0].pos) / p.voices[0].rate, (double) H + 100.0, 1.0);
+        }
+
+        beginTest ("undo/redo restores sound-design edits as grouped steps and ignores project loads");
+        {
+            PreChorusProcessor p;
+            p.undoIdleMs = 0.0;                         // every tick closes the burst (no waiting in tests)
+            auto tick = [&] { p.timerCallback(); p.timerCallback(); };
+            expect (! p.canUndo());
+            const float def = p.param (IDs::space);
+
+            p.setParam (IDs::space, 0.2f); tick();
+            p.setParam (IDs::space, 0.6f); tick();
+            p.setParam (IDs::drive, 0.9f); p.setParam (IDs::air, 0.8f); tick();   // two params = one step
+            expect (p.canUndo());
+
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::drive), 0.2f, 0.011f);       // drive default
+            expectWithinAbsoluteError (p.param (IDs::space), 0.6f, 0.011f);
+            tick();
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.2f, 0.011f);
+            tick();
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::space), def, 0.011f);
+            tick();
+            expect (! p.canUndo());
+            expect (p.canRedo());
+
+            p.redo(); tick();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.2f, 0.011f);
+            p.redo(); tick();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.6f, 0.011f);
+
+            // a new edit after undo discards the redo branch
+            p.undo(); tick();
+            p.setParam (IDs::space, 0.33f); tick();
+            expect (! p.canRedo());
+
+            // project load starts a fresh history
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            p.setStateInformation (blob.getData(), (int) blob.getSize());
+            tick();
+            expect (! p.canUndo());
+        }
+
+        beginTest ("background render publishes without blocking, never overwrites a newer sync render, and audio keeps running");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            p.setParam (IDs::voiceCount, 32.0f);
+            expect (p.getRendered() == nullptr);
+
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            p.timerCallback();                            // consumes the startup dirty flag and hands it to the worker
+            const double kickMs = juce::Time::getMillisecondCounterHiRes() - t0;
+            expect (kickMs < 100.0);                      // the message thread is not blocked by the render
+
+            // audio thread keeps processing while the worker renders
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer midi;
+            int blocks = 0;
+            const double deadline = juce::Time::getMillisecondCounterHiRes() + 20000.0;
+            while (p.getRendered() == nullptr && juce::Time::getMillisecondCounterHiRes() < deadline)
+            {
+                buf.clear();
+                p.processBlock (buf, midi);
+                ++blocks;
+                p.timerCallback();
+                juce::Thread::sleep (2);
+            }
+            expect (p.getRendered() != nullptr);
+            expect (blocks > 0);
+
+            // a change made after a synchronous render wins over any older in-flight result
+            p.setParam (IDs::space, 0.77f);
+            p.timerCallback();                            // starts a background job
+            const double jobDeadline = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! p.renderInFlight.load() && juce::Time::getMillisecondCounterHiRes() < jobDeadline) juce::Thread::sleep (1);
+            expect (p.renderInFlight.load());             // the job really is running before the sync render
+            p.setParam (IDs::space, 0.11f);
+            p.render();                                   // synchronous: makes the older job stale
+            auto syncResult = p.getRendered();
+            juce::Thread::sleep (1500);
+            p.timerCallback();                            // would publish the stale result if it were not discarded
+            expect (p.getRendered() == syncResult);
+        }
+
+        beginTest ("max source length limits file loads, resizes the capture buffer, and old projects keep 12 s");
+        {
+            auto wav = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("prechorus-long", ".wav", false);
+            {
+                juce::AudioBuffer<float> tone (2, 8000 * 40);                  // 40 s at 8 kHz
+                for (int i = 0; i < tone.getNumSamples(); ++i) { const float v = 0.3f * std::sin (0.2f * (float) i); tone.setSample (0, i, v); tone.setSample (1, i, v); }
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::AudioFormatWriter> w (fmt.createWriterFor (new juce::FileOutputStream (wav), 8000.0, 2, 16, {}, 0));
+                expect (w != nullptr);
+                w->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+            }
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            expectEquals (p.getMaxSourceSeconds(), 30);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 30);
+
+            expect (p.loadSampleFile (wav, false, false));
+            expectEquals (p.getLastLoadFileSeconds(), 40);
+            expectEquals (p.getLastLoadUsedSeconds(), 30);
+            { const juce::ScopedLock sl (p.sourceLock); expectEquals (p.loadedBuffer.getNumSamples(), 8000 * 30); }
+
+            p.setMaxSourceSeconds (60);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 60);
+            expect (p.loadSampleFile (wav, false, false));
+            expectEquals (p.getLastLoadUsedSeconds(), 40);
+            p.setMaxSourceSeconds (999);                                       // snaps to the largest option
+            expectEquals (p.getMaxSourceSeconds(), 120);
+            p.setMaxSourceSeconds (12);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 12);
+
+            // the setting is stored in the project; a project without it (v0.0.1) restores to 12 s
+            p.setMaxSourceSeconds (60);
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            PreChorusProcessor q; q.prepareToPlay (48000.0, 256);
+            q.setStateInformation (blob.getData(), (int) blob.getSize());
+            expectEquals (q.getMaxSourceSeconds(), 60);
+            expectEquals (q.captureRingBuffer.getNumSamples(), 48000 * 60);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+            xml->removeAttribute ("maxSourceSec");
+            juce::MemoryBlock legacy; juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+            PreChorusProcessor r2; r2.prepareToPlay (48000.0, 256);
+            r2.setStateInformation (legacy.getData(), (int) legacy.getSize());
+            expectEquals (r2.getMaxSourceSeconds(), 12);
+            wav.deleteFile();
+        }
+
+        beginTest ("fuzz: random parameter sets render finite, bounded audio in every source mode");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            juce::Random rng (2024);
+            int badRender = 0, badAudio = 0;
+            float worstPeak = 0.0f;
+            for (int iter = 0; iter < 30; ++iter)
+            {
+                for (auto* prm : p.getParameters())
+                    prm->setValueNotifyingHost (rng.nextFloat());
+                p.setParam (IDs::sourceMode, (float) (iter % 4));
+                p.setParam (IDs::voiceCount, (float) (1 + rng.nextInt (32)));
+                p.render();
+                auto r = p.getRendered();
+                if (r == nullptr || r->audio.getNumSamples() == 0) { ++badRender; continue; }
+                for (int ch = 0; ch < r->audio.getNumChannels(); ++ch)
+                    for (int i = 0; i < r->audio.getNumSamples(); ++i)
+                        if (! std::isfinite (r->audio.getSample (ch, i))) { ++badRender; ch = 99; break; }
+
+                // play the swarm through the audio callback with MIDI triggers
+                for (int blk = 0; blk < 40; ++blk)
+                {
+                    juce::AudioBuffer<float> buf (2, 512);
+                    for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, 0.2f * std::sin (0.03f * (float) (i + blk * 512)));
+                    juce::MidiBuffer midi;
+                    if (blk == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 40 + rng.nextInt (50), 0.9f), 10);
+                    p.processBlock (buf, midi);
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        worstPeak = juce::jmax (worstPeak, buf.getMagnitude (c, 0, 512));
+                        for (int i = 0; i < 512; ++i) if (! std::isfinite (buf.getSample (c, i))) ++badAudio;
+                    }
+                }
+            }
+            expectEquals (badRender, 0);
+            expectEquals (badAudio, 0);
+            logMessage ("fuzz worst output peak: " + juce::String (worstPeak));
+            expect (worstPeak < 16.0f);                 // not a limiter test: catches runaway gain / filter blow-ups
+        }
+
+        beginTest ("editor constructs, lays out and paints headlessly (set PRECHORUS_SNAPSHOT_DIR to save a PNG)");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.render();
+            std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+            expect (ed != nullptr);
+            if (ed != nullptr)
+            {
+                expect (ed->getWidth() > 400 && ed->getHeight() > 300);
+                auto img = ed->createComponentSnapshot (ed->getLocalBounds());
+                expect (img.isValid());
+                const auto dir = juce::SystemStats::getEnvironmentVariable ("PRECHORUS_SNAPSHOT_DIR", {});
+                if (dir.isNotEmpty() && img.isValid())
+                {
+                    juce::File out = juce::File (dir).getChildFile ("editor.png");
+                    juce::FileOutputStream fos (out);
+                    if (fos.openedOk()) { fos.setPosition (0); fos.truncate(); juce::PNGImageFormat().writeImageToStream (img, fos); }
+                }
+            }
+        }
+
+        beginTest ("simple/full view preference is stored with the project; old projects open in full view");
+        {
+            PreChorusProcessor a;
+            expect (a.simpleView);                                   // new instances start simple
+            a.simpleView = false;
+            juce::MemoryBlock blob; a.getStateInformation (blob);
+            PreChorusProcessor b; b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (! b.simpleView);
+            a.simpleView = true; a.getStateInformation (blob);
+            b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (b.simpleView);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+            xml->removeAttribute ("simpleView");
+            juce::MemoryBlock legacy; juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+            PreChorusProcessor c; c.setStateInformation (legacy.getData(), (int) legacy.getSize());
+            expect (! c.simpleView);
         }
     }
 };

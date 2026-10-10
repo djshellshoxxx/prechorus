@@ -90,7 +90,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override { proc.endGesture (paramId); }
     void mouseDoubleClick (const juce::MouseEvent&) override { proc.setParam (paramId, 0.0f); repaint(); }
 private:
-    void timerCallback() override { const float t = proc.param (paramId); if (t != shown) { shown = t; repaint(); } }
+    void timerCallback() override { const float t = proc.param (paramId); if (! juce::exactlyEqual (t, shown)) { shown = t; repaint(); } }
     PreChorusProcessor& proc;
     juce::String paramId;
     float downT = 0, shown = -9; int downY = 0;
@@ -149,6 +149,7 @@ private:
     Knob& makeKnob (const juce::String& id, const juce::String& text);
     void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
     void setStatus (const juce::String& text);
+    void doUndoRedo (bool redo);
     void applyTooltipSetting();
     void showOptionsMenu();
     void refreshPresetMenu();
@@ -167,7 +168,7 @@ private:
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
                      regenSeedButton { "REGEN" }, optionsButton { "OPTIONS" }, helpButton { "?" },
-                     abButton { "A" }, abCopyButton { "COPY" };
+                     abButton { "A" }, abCopyButton { "COPY" }, viewButton { "FULL VIEW" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
