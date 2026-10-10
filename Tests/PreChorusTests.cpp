@@ -692,6 +692,48 @@ public:
             expectEquals (r2.getMaxSourceSeconds(), 12);
             wav.deleteFile();
         }
+
+        beginTest ("fuzz: random parameter sets render finite, bounded audio in every source mode");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            juce::Random rng (2024);
+            int badRender = 0, badAudio = 0;
+            float worstPeak = 0.0f;
+            for (int iter = 0; iter < 30; ++iter)
+            {
+                for (auto* prm : p.getParameters())
+                    prm->setValueNotifyingHost (rng.nextFloat());
+                p.setParam (IDs::sourceMode, (float) (iter % 4));
+                p.setParam (IDs::voiceCount, (float) (1 + rng.nextInt (32)));
+                p.render();
+                auto r = p.getRendered();
+                if (r == nullptr || r->audio.getNumSamples() == 0) { ++badRender; continue; }
+                for (int ch = 0; ch < r->audio.getNumChannels(); ++ch)
+                    for (int i = 0; i < r->audio.getNumSamples(); ++i)
+                        if (! std::isfinite (r->audio.getSample (ch, i))) { ++badRender; ch = 99; break; }
+
+                // play the swarm through the audio callback with MIDI triggers
+                for (int blk = 0; blk < 40; ++blk)
+                {
+                    juce::AudioBuffer<float> buf (2, 512);
+                    for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, 0.2f * std::sin (0.03f * (float) (i + blk * 512)));
+                    juce::MidiBuffer midi;
+                    if (blk == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 40 + rng.nextInt (50), 0.9f), 10);
+                    p.processBlock (buf, midi);
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        worstPeak = juce::jmax (worstPeak, buf.getMagnitude (c, 0, 512));
+                        for (int i = 0; i < 512; ++i) if (! std::isfinite (buf.getSample (c, i))) ++badAudio;
+                    }
+                }
+            }
+            expectEquals (badRender, 0);
+            expectEquals (badAudio, 0);
+            logMessage ("fuzz worst output peak: " + juce::String (worstPeak));
+            expect (worstPeak < 16.0f);                 // not a limiter test: catches runaway gain / filter blow-ups
+        }
     }
 };
 
