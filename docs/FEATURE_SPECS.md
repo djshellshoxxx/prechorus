@@ -209,7 +209,9 @@ Size: S ≤ 1 dev-day, M 2–3, L 4–7, XL 8+ (human days; an AI agent is typic
 - **Acceptance:** with sidechain silent+main loud and `sc_source=Sidechain` → no duck; reverse → duck; layouts with/without sidechain pass pluginval.
 - **Plan:** `PluginProcessor` buses + detectors. Size: M. Deps: X1, U3 (shares detector). Do V1 and V3 in one bus-layout PR to avoid two rounds of layout bugs.
 
-#### V4 — Key detection & scale snapping
+#### V4 — Key detection & scale snapping  — **DROPPED (spec error found during implementation)**
+> Scale Lock quantizes pitch *offsets relative to the source note*, not absolute pitches, so a detected key root has nothing to drive. Reconsider only if an absolute-pitch mode is added.
+
 - **Behavior:** "Detect key" button analyses the active source (chroma via FFT, 12-bin profile correlation with Krumhansl–Schmuckler major/minor) → sets `scaleRoot` and `Scale Lock` (Major/Minor). Existing Scale Lock stays; add `scaleRoot` (0–11) param. **[VERIFY]** whether a root param already exists (grep `scaleLock` use at l.~15–30: `noteInOct` suggests quantization relative to C).
 - **Acceptance:** ≥ 90% key accuracy on a 20-clip synthetic set (diatonic melodies in all 24 keys), reports confidence; no effect when Scale Lock = Chromatic.
 - **Plan:** `Engine/KeyDetect.{h,cpp}` (pure, unit-testable) + button. Size: M. Deps: none for the algorithm; UI after U1.
