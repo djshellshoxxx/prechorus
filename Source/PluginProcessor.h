@@ -115,6 +115,7 @@ public:
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+    using juce::AudioProcessor::processBlock;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
@@ -136,6 +137,7 @@ public:
     bool loadSampleFile (const juce::File& f, bool previewAfter = false, bool switchFromLiveCapture = true);
     void nextSample();
     void prevSample();
+    void loadDemoSource (int kind, bool switchFromLiveCapture = true);                  // procedural demo vocal (no files needed)
     juce::File getCurrentFile() const { return currentFile; }
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
@@ -180,6 +182,14 @@ public:
     bool saveUserPreset (const juce::File& f, juce::String& error);
     bool loadUserPreset (const juce::File& f, juce::String& error);
 
+    // Diagnostics: plain-text report for bug reports (no audio, no folder paths, no network)
+    juce::String getDiagnosticsReport() const;
+    void logStatus (const juce::String& line);         // message thread only; keeps the last 50 lines
+
+    // Project portability: when true, source audio (loaded file + capture slots) is stored inside the project.
+    bool embedAudio = true;
+    int getEmbedSkipped() const { return lastEmbedSkipped.load(); }
+
     // Editor view preference (stored with host state, not a sound parameter)
     int uiWidth = 0, uiHeight = 0;
     static constexpr int kStateVersion = 2;
@@ -204,6 +214,9 @@ private:
     void timerCallback() override;
     void render();
     void refreshFolderList (const juce::File& f);
+    static juce::String encodeAudio (const juce::AudioBuffer<float>& b, double sr);
+    static bool decodeAudio (const juce::String& b64, juce::AudioBuffer<float>& out, double& sr);
+    void restoreEmbeddedAudio (const juce::ValueTree& embed, bool& loadedRestored);
 
     struct Voice { bool active = false; double pos = 0.0; double rate = 1.0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain, double rate, int sampleOffset);
@@ -211,9 +224,17 @@ private:
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
-    juce::CriticalSection sourceLock;
+    mutable juce::CriticalSection sourceLock;
     juce::AudioBuffer<float> loadedBuffer;
     double loadedSR = 44100.0;
+    int demoKind = -1;                       // >= 0: loadedBuffer is a procedural demo (regenerated on restore)
+    struct EmbedCache { juce::String b64; bool valid = false; };
+    std::array<EmbedCache, 8> slotEmbedCache;
+    EmbedCache loadedEmbedCache;
+    bool slot0IsDefaultDemo = true;          // slot 0 still holds the built-in startup chord (never embedded)
+    std::atomic<int> lastEmbedSkipped { 0 };
+    juce::StringArray statusLog;
+    int hostBlockSize = 0;
     juce::File currentFile;
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;

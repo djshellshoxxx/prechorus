@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 #include "PluginEditor.h"
+#include "DemoSource.h"
 
 namespace PCColours
 {
@@ -127,7 +128,7 @@ juce::Label* PCLookAndFeel::createSliderTextBox (juce::Slider& s)
     return l;
 }
 
-void PCLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox& b)
+void PCLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox&)
 {
     auto r = juce::Rectangle<int> (0, 0, w, h).toFloat().reduced (0.5f);
     g.setColour (isDown ? PCColours::panel2.brighter (0.1f) : PCColours::panel2);
@@ -348,7 +349,8 @@ void WaveformDisplay::timerCallback()
     const float v1 = proc.param (IDs::volEnd);
     const float vt = proc.param (IDs::volTension);
 
-    if (ph != lastPlayhead || t != lastTone || b != lastBass || v0 != lastV0 || v1 != lastV1 || vt != lastVT)
+    if (ph != lastPlayhead || ! juce::exactlyEqual (t, lastTone) || ! juce::exactlyEqual (b, lastBass) || ! juce::exactlyEqual (v0, lastV0)
+        || ! juce::exactlyEqual (v1, lastV1) || ! juce::exactlyEqual (vt, lastVT))
     {
         lastPlayhead = ph; lastTone = t; lastBass = b;
         lastV0 = v0; lastV1 = v1; lastVT = vt;
@@ -1165,6 +1167,14 @@ void PreChorusEditor::showOptionsMenu()
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
     menu.addItem (2, "Reduced motion", true, reducedMotionToggle.getToggleState());
+    menu.addSectionHeader ("Source");
+    juce::PopupMenu demos;
+    const auto demoNames = PCDemo::names();
+    for (int i = 0; i < demoNames.size(); ++i) demos.addItem (2000 + i, demoNames[i]);
+    menu.addSubMenu ("Load demo source", demos);
+    menu.addItem (3, "Store audio inside project", true, proc.embedAudio);
+    menu.addSectionHeader ("Support");
+    menu.addItem (4, "Copy diagnostics to clipboard");
     juce::PopupMenu sizes;
     for (int pct : { 60, 75, 85, 100, 125, 150 })
         sizes.addItem (1000 + pct, juce::String (pct) + "%", true, std::abs (getWidth() - kBaseW * pct / 100) < 4);
@@ -1181,6 +1191,22 @@ void PreChorusEditor::showOptionsMenu()
                             else if (result == 2)
                             {
                                 reducedMotionToggle.setToggleState (! reducedMotionToggle.getToggleState(), juce::sendNotification);
+                            }
+                            else if (result == 3)
+                            {
+                                proc.embedAudio = ! proc.embedAudio;
+                                setStatus (proc.embedAudio ? "Source audio will be stored inside the project." : "Source audio will be referenced by file path only.");
+                            }
+                            else if (result == 4)
+                            {
+                                juce::SystemClipboard::copyTextToClipboard (proc.getDiagnosticsReport());
+                                setStatus ("Diagnostics copied. Paste them into your bug report.");
+                            }
+                            else if (result >= 2000 && result < 2000 + PCDemo::numKinds)
+                            {
+                                proc.loadDemoSource (result - 2000);
+                                waveform.rebuild();
+                                setStatus ("Loaded demo source: " + PCDemo::names()[result - 2000]);
                             }
                             else if (result > 1000)
                             {
@@ -1435,6 +1461,7 @@ void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
 void PreChorusEditor::setStatus (const juce::String& text)
 {
     statusLabel.setText (text, juce::dontSendNotification);
+    proc.logStatus (text);
 }
 
 bool PreChorusEditor::keyPressed (const juce::KeyPress& key)

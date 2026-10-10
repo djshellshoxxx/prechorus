@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DemoSource.h"
 
 namespace
 {
@@ -80,6 +81,25 @@ namespace
     }
 
     constexpr int kMaxLatencySeconds = 20;
+
+    // Built-in startup source (C major add-octave chord, 1.5 s) so a fresh instance makes sound immediately.
+    juce::AudioBuffer<float> makeStartupChord (double sr)
+    {
+        juce::AudioBuffer<float> b (2, (int) (sr * 1.5));
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const double t = (double) i / sr;
+            const float env = (float) (std::exp (-t * 3.2));
+            const float s1 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 261.63 * t)); // C4
+            const float s2 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 329.63 * t)); // E4
+            const float s3 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 392.00 * t)); // G4
+            const float s4 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 523.25 * t)); // C5
+            const float val = (s1 * 0.4f + s2 * 0.3f + s3 * 0.3f + s4 * 0.2f) * env * 0.75f;
+            b.setSample (0, i, val);
+            b.setSample (1, i, val);
+        }
+        return b;
+    }
 }
 
 PreChorusProcessor::PreChorusProcessor()
@@ -96,20 +116,7 @@ PreChorusProcessor::PreChorusProcessor()
     wetParam = apvts.getRawParameterValue (IDs::wet);
 
     loadedSR = 44100.0;
-    loadedBuffer.setSize (2, (int) (loadedSR * 1.5));
-    loadedBuffer.clear();
-    for (int i = 0; i < loadedBuffer.getNumSamples(); ++i)
-    {
-        const double t = (double) i / loadedSR;
-        const float env = (float) (std::exp (-t * 3.2));
-        const float s1 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 261.63 * t)); // C4
-        const float s2 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 329.63 * t)); // E4
-        const float s3 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 392.00 * t)); // G4
-        const float s4 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 523.25 * t)); // C5
-        const float val = (s1 * 0.4f + s2 * 0.3f + s3 * 0.3f + s4 * 0.2f) * env * 0.75f;
-        loadedBuffer.setSample (0, i, val);
-        loadedBuffer.setSample (1, i, val);
-    }
+    loadedBuffer = makeStartupChord (loadedSR);
 
     captureSlots[0].makeCopyOf (loadedBuffer);
     captureSlotSRs[0] = loadedSR;
@@ -222,6 +229,7 @@ bool PreChorusProcessor::isBusesLayoutSupported (const BusesLayout& layouts) con
 void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     hostSampleRate = sampleRate;
+    hostBlockSize = samplesPerBlock;
 
     const int maxCaptureSamples = (int) (sampleRate * 12.0);
     captureRingBuffer.setSize (2, maxCaptureSamples);
@@ -547,6 +555,8 @@ void PreChorusProcessor::commitFinishedCapture()
             captureSlots[(size_t) slot] = std::move (newBuf);
             captureSlotSRs[(size_t) slot] = hostSampleRate;
             captureSlotFilled[(size_t) slot] = true;
+            slotEmbedCache[(size_t) slot].valid = false;
+            if (slot == 0) slot0IsDefaultDemo = false;
             activeSlot.store (slot);
         }
         setParam (IDs::captureSlot, (float) slot);
@@ -1502,6 +1512,8 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter,
         const juce::ScopedLock sl (sourceLock);
         loadedBuffer = std::move (buf);
         loadedSR = reader->sampleRate;
+        loadedEmbedCache.valid = false;
+        demoKind = -1;
     }
     currentFile = f;
     refreshFolderList (f);
@@ -1560,14 +1572,162 @@ bool PreChorusProcessor::exportWav (const juce::File& dest)
     return true;
 }
 
+// ---------------- Embedded audio (project portability) ----------------
+
+namespace
+{
+    constexpr int kMaxEmbedChars = 40 * 1000 * 1000;   // total base64 characters stored per project (~30 MB of FLAC)
+    constexpr double kMaxEmbedSeconds = 130.0;         // decoder safety limit per item
+}
+
+juce::String PreChorusProcessor::encodeAudio (const juce::AudioBuffer<float>& b, double sr)
+{
+    if (b.getNumSamples() <= 0 || b.getNumChannels() < 1) return {};
+    juce::MemoryBlock mb;
+    {
+        auto os = std::make_unique<juce::MemoryOutputStream> (mb, false);
+        juce::FlacAudioFormat flac;
+        std::unique_ptr<juce::AudioFormatWriter> w (flac.createWriterFor (os.get(), sr, 2, 24, {}, 5));
+        if (w == nullptr) return {};
+        os.release();                                   // the writer owns the stream now
+        const juce::AudioBuffer<float>* src = &b;
+        juce::AudioBuffer<float> stereo;
+        if (b.getNumChannels() < 2)
+        {
+            stereo.makeCopyOf (b);
+            stereo.setSize (2, b.getNumSamples(), true);
+            stereo.copyFrom (1, 0, b, 0, 0, b.getNumSamples());
+            src = &stereo;
+        }
+        w->writeFromAudioSampleBuffer (*src, 0, b.getNumSamples());
+    }                                                   // writer destroyed here: flushes into mb
+    return juce::Base64::toBase64 (mb.getData(), mb.getSize());
+}
+
+bool PreChorusProcessor::decodeAudio (const juce::String& b64, juce::AudioBuffer<float>& out, double& sr)
+{
+    if (b64.isEmpty() || b64.length() > kMaxEmbedChars) return false;
+    juce::MemoryOutputStream mo;
+    if (! juce::Base64::convertFromBase64 (mo, b64)) return false;
+    const auto mb = mo.getMemoryBlock();
+    if (mb.getSize() < 64) return false;
+
+    juce::FlacAudioFormat flac;
+    std::unique_ptr<juce::AudioFormatReader> r (flac.createReaderFor (new juce::MemoryInputStream (mb.getData(), mb.getSize(), false), true));
+    if (r == nullptr || r->numChannels < 1 || r->numChannels > 2 || r->lengthInSamples <= 0) return false;
+    if (r->sampleRate < 8000.0 || r->sampleRate > 384000.0) return false;
+    if ((double) r->lengthInSamples > r->sampleRate * kMaxEmbedSeconds) return false;
+
+    const int len = (int) r->lengthInSamples;
+    juce::AudioBuffer<float> buf (2, len);
+    if (r->numChannels >= 2)
+    {
+        if (! r->read (&buf, 0, len, 0, true, true)) return false;
+    }
+    else
+    {
+        juce::AudioBuffer<float> mono (1, len);
+        if (! r->read (&mono, 0, len, 0, true, true)) return false;
+        buf.copyFrom (0, 0, mono, 0, 0, len);
+        buf.copyFrom (1, 0, mono, 0, 0, len);
+    }
+    out = std::move (buf);
+    sr = r->sampleRate;
+    return true;
+}
+
+void PreChorusProcessor::restoreEmbeddedAudio (const juce::ValueTree& embed, bool& loadedRestored)
+{
+    // Slots not present in the project are reset (a restore must reproduce the saved project, not merge into the live one).
+    const juce::ScopedLock sl (sourceLock);
+    for (int i = 0; i < kNumHistorySlots; ++i)
+    {
+        captureSlots[(size_t) i].setSize (2, 0);
+        captureSlotFilled[(size_t) i] = false;
+        slotEmbedCache[(size_t) i].valid = false;
+    }
+    slot0IsDefaultDemo = false;
+
+    for (int c = 0; c < embed.getNumChildren(); ++c)
+    {
+        const auto item = embed.getChild (c);
+        if (! item.hasType ("AUDIO")) continue;
+        juce::AudioBuffer<float> buf;
+        double sr = 44100.0;
+        if (! decodeAudio (item.getProperty ("data").toString(), buf, sr)) continue;
+        const auto kind = item.getProperty ("kind").toString();
+        if (kind == "loaded")
+        {
+            loadedBuffer = std::move (buf);
+            loadedSR = sr;
+            loadedEmbedCache.valid = false;
+            demoKind = -1;
+            loadedRestored = true;
+        }
+        else if (kind == "slot")
+        {
+            const int idx = (int) item.getProperty ("idx", -1);
+            if (idx < 0 || idx >= kNumHistorySlots) continue;
+            captureSlots[(size_t) idx] = std::move (buf);
+            captureSlotSRs[(size_t) idx] = sr;
+            captureSlotFilled[(size_t) idx] = true;
+            slotEmbedCache[(size_t) idx].valid = false;
+        }
+    }
+    if (! captureSlotFilled[0])          // slot 0 was the untouched startup chord when saved (it is never embedded)
+    {
+        captureSlots[0] = makeStartupChord (44100.0);
+        captureSlotSRs[0] = 44100.0;
+        captureSlotFilled[0] = true;
+        slot0IsDefaultDemo = true;
+    }
+}
+
 void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    state.removeChild (state.getChildWithName ("EMBED"), nullptr);   // never carry stale embedded audio forward
     state.setProperty ("stateVersion", kStateVersion, nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("activeSlot", activeSlot.load(), nullptr);
     state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    state.setProperty ("embedAudio", embedAudio, nullptr);
     if (uiWidth > 0) { state.setProperty ("uiWidth", uiWidth, nullptr); state.setProperty ("uiHeight", uiHeight, nullptr); }
+
+    int skipped = 0;
+    if (embedAudio)
+    {
+        juce::ValueTree embed ("EMBED");
+        int budget = kMaxEmbedChars;
+        const juce::ScopedLock sl (sourceLock);
+
+        auto addItem = [&] (const char* kind, int idx, EmbedCache& cache, const juce::AudioBuffer<float>& b, double sr)
+        {
+            if (! cache.valid) { cache.b64 = encodeAudio (b, sr); cache.valid = true; }
+            if (cache.b64.isEmpty()) return;
+            if (cache.b64.length() > budget) { ++skipped; return; }
+            budget -= cache.b64.length();
+            juce::ValueTree item ("AUDIO");
+            item.setProperty ("kind", kind, nullptr);
+            item.setProperty ("idx", idx, nullptr);
+            item.setProperty ("data", cache.b64, nullptr);
+            embed.appendChild (item, nullptr);
+        };
+
+        // Priority: active slot, loaded source, then the remaining history slots.
+        const int act = juce::jlimit (0, kNumHistorySlots - 1, activeSlot.load());
+        auto wantSlot = [&] (int i) { return captureSlotFilled[(size_t) i] && ! (i == 0 && slot0IsDefaultDemo); };
+        if (wantSlot (act)) addItem ("slot", act, slotEmbedCache[(size_t) act], captureSlots[(size_t) act], captureSlotSRs[(size_t) act]);
+        if (demoKind < 0 && currentFile != juce::File() && loadedBuffer.getNumSamples() > 0)
+            addItem ("loaded", -1, loadedEmbedCache, loadedBuffer, loadedSR);
+        for (int i = 0; i < kNumHistorySlots; ++i)
+            if (i != act && wantSlot (i))
+                addItem ("slot", i, slotEmbedCache[(size_t) i], captureSlots[(size_t) i], captureSlotSRs[(size_t) i]);
+
+        state.appendChild (embed, nullptr);
+    }
+    state.setProperty ("demoKind", demoKind, nullptr);
+    lastEmbedSkipped.store (skipped);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1579,16 +1739,84 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (! state.isValid() || ! state.hasType (apvts.state.getType())) return; // malformed: keep current state
     if ((int) state.getProperty ("stateVersion", 1) > kStateVersion) return;  // future version: refuse safely
 
+    auto embed = state.getChildWithName ("EMBED");
+    state.removeChild (embed, nullptr);   // keep the (large) audio out of the live parameter tree
     apvts.replaceState (state);
-    // Restore never changes the saved Source Mode: a missing or present file is simply reloaded.
+
+    embedAudio = (bool) state.getProperty ("embedAudio", true);
+    bool loadedRestored = false;
+    if (embed.isValid()) restoreEmbeddedAudio (embed, loadedRestored);
+
+    // Restore never changes the saved Source Mode.
+    const int savedDemo = (int) state.getProperty ("demoKind", -1);
     juce::File f (state.getProperty ("file", "").toString());
-    if (f.existsAsFile()) loadSampleFile (f, false, false);
+    if (! loadedRestored)
+    {
+        if (savedDemo >= 0 && savedDemo < PCDemo::numKinds) loadDemoSource (savedDemo, false);
+        else if (f.existsAsFile()) loadSampleFile (f, false, false);
+    }
+    else if (f != juce::File())
+    {
+        currentFile = f;                       // display name only; audio comes from the project
+        if (f.existsAsFile()) refreshFolderList (f);
+    }
+    // loadDemoSource/loadSampleFile above only change the source mode when asked to; restore keeps it.
     activeSlot.store (juce::jlimit (0, kNumHistorySlots - 1, (int) state.getProperty ("activeSlot", 0)));
     captureLockState.store ((bool) state.getProperty ("captureLock", false));
     uiWidth = state.getProperty ("uiWidth", 0);
     uiHeight = state.getProperty ("uiHeight", 0);
     abSnapshots[0] = {}; abSnapshots[1] = {}; abSlotB = false;
     dirty = true;
+}
+
+void PreChorusProcessor::loadDemoSource (int kind, bool switchFromLiveCapture)
+{
+    kind = juce::jlimit (0, (int) PCDemo::numKinds - 1, kind);
+    auto buf = PCDemo::generate (kind, hostSampleRate > 1000.0 ? hostSampleRate : 44100.0);
+    {
+        const juce::ScopedLock sl (sourceLock);
+        loadedSR = hostSampleRate > 1000.0 ? hostSampleRate : 44100.0;
+        loadedBuffer = std::move (buf);
+        loadedEmbedCache.valid = false;
+        demoKind = kind;
+    }
+    currentFile = juce::File();
+    if (switchFromLiveCapture && (int) param (IDs::sourceMode) == 0) setParam (IDs::sourceMode, 1.0f);
+    dirty = true;
+}
+
+void PreChorusProcessor::logStatus (const juce::String& line)
+{
+    statusLog.add (line);
+    while (statusLog.size() > 50) statusLog.remove (0);
+}
+
+juce::String PreChorusProcessor::getDiagnosticsReport() const
+{
+    juce::String r;
+    r << "PreChorus diagnostics\n";
+    r << "Version: " << PRECHORUS_VERSION_STRING << "  (built " << __DATE__ << ")\n";
+    r << "Format: " << juce::AudioProcessor::getWrapperTypeDescription (wrapperType) << "\n";
+    r << "Host: " << juce::PluginHostType().getHostDescription() << "\n";
+    r << "OS: " << juce::SystemStats::getOperatingSystemName() << " / " << juce::SystemStats::getCpuModel() << "\n";
+    r << "Sample rate: " << hostSampleRate << "  Block size: " << hostBlockSize << "\n";
+    r << "Channels in/out: " << getTotalNumInputChannels() << "/" << getTotalNumOutputChannels()
+      << "  Latency: " << getLatencySamples() << " samples\n";
+    {
+        const juce::ScopedLock sl (sourceLock);
+        int filled = 0;
+        for (int i = 0; i < kNumHistorySlots; ++i) if (captureSlotFilled[(size_t) i]) ++filled;
+        r << "Source mode: " << (int) param (IDs::sourceMode) << "  Loaded: "
+          << (demoKind >= 0 ? juce::String ("demo ") + juce::String (demoKind) : currentFile.getFileName())
+          << " (" << loadedBuffer.getNumSamples() << " samples @ " << loadedSR << ")\n";
+        r << "Capture slots filled: " << filled << "/" << kNumHistorySlots << "  Active: " << activeSlot.load() << "\n";
+    }
+    r << "Embed audio: " << (embedAudio ? "on" : "off") << "  Skipped (size cap): " << lastEmbedSkipped.load() << "\n";
+    r << "Voices: " << (int) param (IDs::voiceCount) << "  Character: " << (int) param (IDs::character)
+      << "  Seed: " << (int) param (IDs::seed) << "\n";
+    r << "Recent status:\n";
+    for (auto& l : statusLog) r << "  " << l << "\n";
+    return r;
 }
 
 // ---------------- A/B Comparison ----------------

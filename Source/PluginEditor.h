@@ -90,7 +90,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override { proc.endGesture (paramId); }
     void mouseDoubleClick (const juce::MouseEvent&) override { proc.setParam (paramId, 0.0f); repaint(); }
 private:
-    void timerCallback() override { const float t = proc.param (paramId); if (t != shown) { shown = t; repaint(); } }
+    void timerCallback() override { const float t = proc.param (paramId); if (! juce::exactlyEqual (t, shown)) { shown = t; repaint(); } }
     PreChorusProcessor& proc;
     juce::String paramId;
     float downT = 0, shown = -9; int downY = 0;
