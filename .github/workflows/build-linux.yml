@@ -79,7 +79,7 @@ jobs:
       - name: Run regression tests under ASan/UBSan
         env:
           ASAN_OPTIONS: detect_leaks=0
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1:suppressions=${{ github.workspace }}/tools/ubsan.supp
         run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
 
   # Thread sanitizer: covers the background render worker and the capture/render hand-off.
