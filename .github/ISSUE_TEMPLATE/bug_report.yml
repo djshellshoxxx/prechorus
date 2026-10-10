@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      options: [VST3, CLAP, AU, Standalone]
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: DAW / host and version
+      placeholder: e.g. Reaper 7.20, FL Studio 24, Ableton Live 12
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Windows 11, macOS 14 (Apple silicon), Ubuntu 22.04
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: In PreChorus choose OPTIONS > Copy diagnostics to clipboard, then paste here. It contains no audio and no folder paths.
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
