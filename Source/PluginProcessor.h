@@ -189,6 +189,13 @@ public:
     void undo();
     void redo();
 
+    // Maximum length of a loaded file / live capture, in seconds (12, 30, 60 or 120). Capture buffer is resized safely.
+    int getMaxSourceSeconds() const { return maxSourceSec.load(); }
+    void setMaxSourceSeconds (int seconds);
+    // Set by loadSampleFile: file length and the length actually used (to tell the user when a file was cropped).
+    int getLastLoadFileSeconds() const { return lastLoadFileSec.load(); }
+    int getLastLoadUsedSeconds() const { return lastLoadUsedSec.load(); }
+
     // Diagnostics: plain-text report for bug reports (no audio, no folder paths, no network)
     juce::String getDiagnosticsReport() const;
     void logStatus (const juce::String& line);         // message thread only; keeps the last 50 lines
@@ -241,6 +248,8 @@ private:
     mutable juce::CriticalSection sourceLock;
     juce::AudioBuffer<float> loadedBuffer;
     double loadedSR = 44100.0;
+    std::atomic<int> maxSourceSec { 30 };
+    std::atomic<int> lastLoadFileSec { 0 }, lastLoadUsedSec { 0 };
     int demoKind = -1;                       // >= 0: loadedBuffer is a procedural demo (regenerated on restore)
     struct EmbedCache { juce::String b64; bool valid = false; };
     std::array<EmbedCache, 8> slotEmbedCache;

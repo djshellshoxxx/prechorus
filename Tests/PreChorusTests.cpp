@@ -645,6 +645,53 @@ public:
             p.timerCallback();                            // would publish the stale result if it were not discarded
             expect (p.getRendered() == syncResult);
         }
+
+        beginTest ("max source length limits file loads, resizes the capture buffer, and old projects keep 12 s");
+        {
+            auto wav = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("prechorus-long", ".wav", false);
+            {
+                juce::AudioBuffer<float> tone (2, 8000 * 40);                  // 40 s at 8 kHz
+                for (int i = 0; i < tone.getNumSamples(); ++i) { const float v = 0.3f * std::sin (0.2f * (float) i); tone.setSample (0, i, v); tone.setSample (1, i, v); }
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::AudioFormatWriter> w (fmt.createWriterFor (new juce::FileOutputStream (wav), 8000.0, 2, 16, {}, 0));
+                expect (w != nullptr);
+                w->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+            }
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            expectEquals (p.getMaxSourceSeconds(), 30);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 30);
+
+            expect (p.loadSampleFile (wav, false, false));
+            expectEquals (p.getLastLoadFileSeconds(), 40);
+            expectEquals (p.getLastLoadUsedSeconds(), 30);
+            { const juce::ScopedLock sl (p.sourceLock); expectEquals (p.loadedBuffer.getNumSamples(), 8000 * 30); }
+
+            p.setMaxSourceSeconds (60);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 60);
+            expect (p.loadSampleFile (wav, false, false));
+            expectEquals (p.getLastLoadUsedSeconds(), 40);
+            p.setMaxSourceSeconds (999);                                       // snaps to the largest option
+            expectEquals (p.getMaxSourceSeconds(), 120);
+            p.setMaxSourceSeconds (12);
+            expectEquals (p.captureRingBuffer.getNumSamples(), 48000 * 12);
+
+            // the setting is stored in the project; a project without it (v0.0.1) restores to 12 s
+            p.setMaxSourceSeconds (60);
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            PreChorusProcessor q; q.prepareToPlay (48000.0, 256);
+            q.setStateInformation (blob.getData(), (int) blob.getSize());
+            expectEquals (q.getMaxSourceSeconds(), 60);
+            expectEquals (q.captureRingBuffer.getNumSamples(), 48000 * 60);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+            xml->removeAttribute ("maxSourceSec");
+            juce::MemoryBlock legacy; juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+            PreChorusProcessor r2; r2.prepareToPlay (48000.0, 256);
+            r2.setStateInformation (legacy.getData(), (int) legacy.getSize());
+            expectEquals (r2.getMaxSourceSeconds(), 12);
+            wav.deleteFile();
+        }
     }
 };
 

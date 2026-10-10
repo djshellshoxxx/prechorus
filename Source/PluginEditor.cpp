@@ -714,7 +714,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
                 {
                     const bool ok = proc.loadSampleFile (f, true);
                     waveform.rebuild();
-                    setStatus (ok ? "Loaded: " + f.getFileName() : "Could not load selected audio file.");
+                    const bool cropped = ok && proc.getLastLoadFileSeconds() > proc.getLastLoadUsedSeconds();
+                    setStatus (! ok ? "Could not load selected audio file."
+                                    : cropped ? "Loaded: " + f.getFileName() + " (cropped to " + juce::String (proc.getLastLoadUsedSeconds())
+                                                  + " s of " + juce::String (proc.getLastLoadFileSeconds()) + " s - raise Max source length in OPTIONS)"
+                                              : "Loaded: " + f.getFileName());
                 }
             });
     };
@@ -1176,6 +1180,10 @@ void PreChorusEditor::showOptionsMenu()
     const auto demoNames = PCDemo::names();
     for (int i = 0; i < demoNames.size(); ++i) demos.addItem (2000 + i, demoNames[i]);
     menu.addSubMenu ("Load demo source", demos);
+    juce::PopupMenu lengths;
+    for (int sec : { 12, 30, 60, 120 })
+        lengths.addItem (3000 + sec, juce::String (sec) + " seconds", true, proc.getMaxSourceSeconds() == sec);
+    menu.addSubMenu ("Max source length", lengths);
     menu.addItem (3, "Store audio inside project", true, proc.embedAudio);
     menu.addSectionHeader ("Support");
     menu.addItem (4, "Copy diagnostics to clipboard");
@@ -1209,6 +1217,11 @@ void PreChorusEditor::showOptionsMenu()
                             {
                                 juce::SystemClipboard::copyTextToClipboard (proc.getDiagnosticsReport());
                                 setStatus ("Diagnostics copied. Paste them into your bug report.");
+                            }
+                            else if (result >= 3000 && result <= 3120)
+                            {
+                                proc.setMaxSourceSeconds (result - 3000);
+                                setStatus ("Max source length: " + juce::String (proc.getMaxSourceSeconds()) + " s (live capture buffer resized; applies to the next file load).");
                             }
                             else if (result >= 2000 && result < 2000 + PCDemo::numKinds)
                             {

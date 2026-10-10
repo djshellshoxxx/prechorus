@@ -265,7 +265,7 @@ void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     hostSampleRate = sampleRate;
     hostBlockSize = samplesPerBlock;
 
-    const int maxCaptureSamples = (int) (sampleRate * 12.0);
+    const int maxCaptureSamples = (int) (sampleRate * (double) maxSourceSec.load());
     captureRingBuffer.setSize (2, maxCaptureSamples);
     captureRingBuffer.clear();
     captureWritePos = 0;
@@ -1379,7 +1379,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             else
             {
                 captureWritePos = 0; captureSilenceCounter = 0;
-                captureTargetSamples = juce::jmin (captureRingBuffer.getNumSamples(), (int) (hostSampleRate * 8.0));
+                captureTargetSamples = juce::jmin (captureRingBuffer.getNumSamples(), (int) (hostSampleRate * (maxSourceSec.load() > 12 ? (double) maxSourceSec.load() : 8.0)));
                 captureState.store (CaptureState::recording);
             }
         }
@@ -1402,7 +1402,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
                 const double secPerBeat = 60.0 / juce::jlimit (30.0, 300.0, hostBpm.load());
                 captureTargetSamples = (int) (beatFractions[mode - 1] * secPerBeat * hostSampleRate);
             }
-            else captureTargetSamples = (int) (hostSampleRate * 6.0);
+            else captureTargetSamples = (int) (hostSampleRate * (maxSourceSec.load() > 12 ? (double) maxSourceSec.load() * 0.5 : 6.0));
             captureTargetSamples = juce::jlimit (1, captureRingBuffer.getNumSamples(), captureTargetSamples);
         }
     }
@@ -1594,7 +1594,10 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter,
     if (! f.existsAsFile()) return false;
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate < 1000.0 || reader->numChannels == 0) return false;
-    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 12.0));
+    const int maxSec = maxSourceSec.load();
+    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * (double) maxSec));
+    lastLoadFileSec.store ((int) std::ceil ((double) reader->lengthInSamples / reader->sampleRate));
+    lastLoadUsedSec.store ((int) std::ceil ((double) len / reader->sampleRate));
 
     // Always store stereo: the render engine unconditionally reads both channels of the
     // source buffer, so a mono file loaded as a 1-channel buffer would read past the end
@@ -1795,6 +1798,7 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("activeSlot", activeSlot.load(), nullptr);
     state.setProperty ("captureLock", captureLockState.load(), nullptr);
     state.setProperty ("embedAudio", embedAudio, nullptr);
+    state.setProperty ("maxSourceSec", maxSourceSec.load(), nullptr);
     if (uiWidth > 0) { state.setProperty ("uiWidth", uiWidth, nullptr); state.setProperty ("uiHeight", uiHeight, nullptr); }
 
     int skipped = 0;
@@ -1847,6 +1851,7 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     apvts.replaceState (state);
 
     embedAudio = (bool) state.getProperty ("embedAudio", true);
+    setMaxSourceSeconds ((int) state.getProperty ("maxSourceSec", 12));   // projects from v0.0.1 keep their 12 s limit
     bool loadedRestored = false;
     if (embed.isValid()) restoreEmbeddedAudio (embed, loadedRestored);
 
@@ -1876,6 +1881,23 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
     undoChangeFlag.store (false);
     dirty = true;
+}
+
+void PreChorusProcessor::setMaxSourceSeconds (int seconds)
+{
+    const int snapped = seconds <= 12 ? 12 : seconds <= 30 ? 30 : seconds <= 60 ? 60 : 120;
+    if (snapped == maxSourceSec.load()) return;
+    maxSourceSec.store (snapped);
+    if (hostSampleRate > 1000.0)
+    {
+        // The audio thread owns the capture ring buffer: pause it while the buffer is reallocated.
+        suspendProcessing (true);
+        captureRingBuffer.setSize (2, (int) (hostSampleRate * (double) snapped), false, true, false);
+        captureWritePos = 0;
+        captureState.store (CaptureState::idle);
+        captureCommand.store (cmdNone);
+        suspendProcessing (false);
+    }
 }
 
 void PreChorusProcessor::loadDemoSource (int kind, bool switchFromLiveCapture)
@@ -1920,6 +1942,7 @@ juce::String PreChorusProcessor::getDiagnosticsReport() const
           << " (" << loadedBuffer.getNumSamples() << " samples @ " << loadedSR << ")\n";
         r << "Capture slots filled: " << filled << "/" << kNumHistorySlots << "  Active: " << activeSlot.load() << "\n";
     }
+    r << "Max source length: " << maxSourceSec.load() << " s\n";
     r << "Embed audio: " << (embedAudio ? "on" : "off") << "  Skipped (size cap): " << lastEmbedSkipped.load() << "\n";
     r << "Voices: " << (int) param (IDs::voiceCount) << "  Character: " << (int) param (IDs::character)
       << "  Seed: " << (int) param (IDs::seed) << "\n";
