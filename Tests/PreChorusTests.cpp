@@ -560,6 +560,49 @@ public:
             p.startVoice (1.0f, 2.0, 100);
             expectWithinAbsoluteError (((double) H - p.voices[0].pos) / p.voices[0].rate, (double) H + 100.0, 1.0);
         }
+
+        beginTest ("undo/redo restores sound-design edits as grouped steps and ignores project loads");
+        {
+            PreChorusProcessor p;
+            p.undoIdleMs = 0.0;                         // every tick closes the burst (no waiting in tests)
+            auto tick = [&] { p.timerCallback(); p.timerCallback(); };
+            expect (! p.canUndo());
+            const float def = p.param (IDs::space);
+
+            p.setParam (IDs::space, 0.2f); tick();
+            p.setParam (IDs::space, 0.6f); tick();
+            p.setParam (IDs::drive, 0.9f); p.setParam (IDs::air, 0.8f); tick();   // two params = one step
+            expect (p.canUndo());
+
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::drive), 0.2f, 0.011f);       // drive default
+            expectWithinAbsoluteError (p.param (IDs::space), 0.6f, 0.011f);
+            tick();
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.2f, 0.011f);
+            tick();
+            p.undo();
+            expectWithinAbsoluteError (p.param (IDs::space), def, 0.011f);
+            tick();
+            expect (! p.canUndo());
+            expect (p.canRedo());
+
+            p.redo(); tick();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.2f, 0.011f);
+            p.redo(); tick();
+            expectWithinAbsoluteError (p.param (IDs::space), 0.6f, 0.011f);
+
+            // a new edit after undo discards the redo branch
+            p.undo(); tick();
+            p.setParam (IDs::space, 0.33f); tick();
+            expect (! p.canRedo());
+
+            // project load starts a fresh history
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            p.setStateInformation (blob.getData(), (int) blob.getSize());
+            tick();
+            expect (! p.canUndo());
+        }
     }
 };
 

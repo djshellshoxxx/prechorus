@@ -565,6 +565,7 @@ HelpOverlay::HelpOverlay()
         "A finished capture switches Loaded Sample back to Live Capture so the new take is audible.\n\n"
         "KEYBOARD SHORTCUTS:\n"
         "- Space: preview the current swarm.   - Esc: stop preview (or close this help).\n"
+        "- Ctrl/Cmd+Z: undo.   - Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo (sound-design edits only).\n"
         "- R: randomize sound-design parameters.   - G: regenerate the deterministic swarm seed.\n"
         "- H / F1: open this help panel.   - B: switch A/B comparison slot.\n\n"
         "PRESETS: The preset menu holds 10 factory presets (Pop Vocal Double, EDM Riser Swarm, Future Bass "
@@ -1167,6 +1168,9 @@ void PreChorusEditor::showOptionsMenu()
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
     menu.addItem (2, "Reduced motion", true, reducedMotionToggle.getToggleState());
+    menu.addSectionHeader ("Edit");
+    menu.addItem (10, "Undo  (Ctrl/Cmd+Z)", proc.canUndo());
+    menu.addItem (11, "Redo  (Ctrl/Cmd+Shift+Z)", proc.canRedo());
     menu.addSectionHeader ("Source");
     juce::PopupMenu demos;
     const auto demoNames = PCDemo::names();
@@ -1191,6 +1195,10 @@ void PreChorusEditor::showOptionsMenu()
                             else if (result == 2)
                             {
                                 reducedMotionToggle.setToggleState (! reducedMotionToggle.getToggleState(), juce::sendNotification);
+                            }
+                            else if (result == 10 || result == 11)
+                            {
+                                doUndoRedo (result == 11);
                             }
                             else if (result == 3)
                             {
@@ -1458,6 +1466,14 @@ void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
     setStatus ("Dropped file could not be loaded.");
 }
 
+void PreChorusEditor::doUndoRedo (bool redo)
+{
+    if (redo ? ! proc.canRedo() : ! proc.canUndo()) { setStatus (redo ? "Nothing to redo." : "Nothing to undo."); return; }
+    if (redo) proc.redo(); else proc.undo();
+    waveform.rebuild();
+    setStatus (redo ? "Redo." : "Undo.");
+}
+
 void PreChorusEditor::setStatus (const juce::String& text)
 {
     statusLabel.setText (text, juce::dontSendNotification);
@@ -1483,6 +1499,15 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
         proc.stopAll();
         setStatus ("Preview stopped.");
         return true;
+    }
+
+    // Undo / redo: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
+    if (key.getModifiers().isCommandDown())
+    {
+        const int code = key.getKeyCode();
+        const bool shift = key.getModifiers().isShiftDown();
+        if ((code == 'Z' || code == 'z') && ! shift) { doUndoRedo (false); return true; }
+        if (((code == 'Z' || code == 'z') && shift) || code == 'Y' || code == 'y') { doUndoRedo (true); return true; }
     }
 
     const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());

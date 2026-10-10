@@ -122,6 +122,7 @@ PreChorusProcessor::PreChorusProcessor()
     captureSlotSRs[0] = loadedSR;
     captureSlotFilled[0] = true;
 
+    undoBaseline = soundDesignSnapshot();
     startTimerHz (30);
     dirty = true;
 }
@@ -262,6 +263,7 @@ void PreChorusProcessor::parameterChanged (const juce::String& id, float value)
         activeSlot.store (juce::jlimit (0, kNumHistorySlots - 1, juce::roundToInt (value)));
     else if (id == IDs::captureLock)
         captureLockState.store (value > 0.5f);
+    if (soundDesignIds().contains (id)) undoChangeFlag.store (true);   // no allocation: may run on the audio thread
     dirty = true;
 }
 
@@ -486,6 +488,7 @@ void PreChorusProcessor::timerCallback()
         }
     }
     commitFinishedCapture();
+    updateUndoTracking();
     // Drop retired renders only once the audio thread no longer holds them.
     retiredRendered.erase (std::remove_if (retiredRendered.begin(), retiredRendered.end(),
                                            [] (const auto& r) { return r.use_count() == 1; }), retiredRendered.end());
@@ -1788,6 +1791,12 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     uiWidth = state.getProperty ("uiWidth", 0);
     uiHeight = state.getProperty ("uiHeight", 0);
     abSnapshots[0] = {}; abSnapshots[1] = {}; abSlotB = false;
+    // A project load is not an undoable edit: start a fresh history (absorb the restore's own parameter callbacks).
+    undoStack.clear(); redoStack.clear();
+    undoBaseline = soundDesignSnapshot();
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
     dirty = true;
 }
 
@@ -1839,6 +1848,66 @@ juce::String PreChorusProcessor::getDiagnosticsReport() const
     r << "Recent status:\n";
     for (auto& l : statusLog) r << "  " << l << "\n";
     return r;
+}
+
+// ---------------- Undo / Redo ----------------
+
+void PreChorusProcessor::updateUndoTracking()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (undoChangeFlag.exchange (false))
+    {
+        if (! undoBurstOpen)
+        {
+            undoBurstOpen = true;
+            if (undoBaseline.isValid())
+            {
+                undoStack.push_back (undoBaseline);
+                if (undoStack.size() > kUndoDepth) undoStack.erase (undoStack.begin());
+            }
+            redoStack.clear();
+        }
+        undoLastChangeMs = now;
+    }
+    else if (undoBurstOpen && now - undoLastChangeMs >= undoIdleMs)
+    {
+        undoBurstOpen = false;
+        undoBaseline = soundDesignSnapshot();
+    }
+}
+
+void PreChorusProcessor::undo()
+{
+    updateUndoTracking();                       // make sure a just-started edit has its before-state on the stack
+    const auto cur = soundDesignSnapshot();
+    while (! undoStack.empty() && undoStack.back().isEquivalentTo (cur)) undoStack.pop_back();
+    if (undoStack.empty()) return;
+    redoStack.push_back (cur);
+    if (redoStack.size() > kUndoDepth) redoStack.erase (redoStack.begin());
+    const auto target = undoStack.back();
+    undoStack.pop_back();
+    applySoundDesignSnapshot (target);
+    undoBaseline = target;                      // absorb the callbacks caused by applying it
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
+}
+
+void PreChorusProcessor::redo()
+{
+    updateUndoTracking();
+    const auto cur = soundDesignSnapshot();
+    while (! redoStack.empty() && redoStack.back().isEquivalentTo (cur)) redoStack.pop_back();
+    if (redoStack.empty()) return;
+    undoStack.push_back (cur);
+    if (undoStack.size() > kUndoDepth) undoStack.erase (undoStack.begin());
+    const auto target = redoStack.back();
+    redoStack.pop_back();
+    applySoundDesignSnapshot (target);
+    undoBaseline = target;
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
 }
 
 // ---------------- A/B Comparison ----------------

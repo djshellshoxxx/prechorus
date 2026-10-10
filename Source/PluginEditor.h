@@ -149,6 +149,7 @@ private:
     Knob& makeKnob (const juce::String& id, const juce::String& text);
     void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
     void setStatus (const juce::String& text);
+    void doUndoRedo (bool redo);
     void applyTooltipSetting();
     void showOptionsMenu();
     void refreshPresetMenu();

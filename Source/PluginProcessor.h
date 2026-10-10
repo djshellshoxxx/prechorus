@@ -182,6 +182,13 @@ public:
     bool saveUserPreset (const juce::File& f, juce::String& error);
     bool loadUserPreset (const juce::File& f, juce::String& error);
 
+    // Undo / redo of sound-design edits (knobs, combos, toggles, randomize, presets, A/B). Message thread only.
+    // Source audio and capture slots are intentionally not undoable.
+    bool canUndo() const { return ! undoStack.empty(); }
+    bool canRedo() const { return ! redoStack.empty(); }
+    void undo();
+    void redo();
+
     // Diagnostics: plain-text report for bug reports (no audio, no folder paths, no network)
     juce::String getDiagnosticsReport() const;
     void logStatus (const juce::String& line);         // message thread only; keeps the last 50 lines
@@ -213,6 +220,7 @@ private:
     void applySoundDesignSnapshot (const juce::ValueTree& t);
     void timerCallback() override;
     void render();
+    void updateUndoTracking();
     void refreshFolderList (const juce::File& f);
     static juce::String encodeAudio (const juce::AudioBuffer<float>& b, double sr);
     static bool decodeAudio (const juce::String& b64, juce::AudioBuffer<float>& out, double& sr);
@@ -283,6 +291,15 @@ private:
     juce::AudioBuffer<float> dryDelay;
     int dryDelayWrite = 0;
     std::atomic<int> reportedLatency { 0 };
+
+    // Undo tracking: a burst of edits (quiet gap = undoIdleMs) is one undo step; the pre-burst state is pushed.
+    static constexpr size_t kUndoDepth = 100;
+    std::vector<juce::ValueTree> undoStack, redoStack;
+    juce::ValueTree undoBaseline;
+    std::atomic<bool> undoChangeFlag { false };
+    bool undoBurstOpen = false;
+    double undoLastChangeMs = 0.0;
+    double undoIdleMs = 500.0;
 
     juce::ValueTree abSnapshots[2];
     bool abSlotB = false;
