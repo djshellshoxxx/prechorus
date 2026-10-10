@@ -83,11 +83,15 @@ jobs:
         run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
 
   # Thread sanitizer: covers the background render worker and the capture/render hand-off.
+  # Runs on 24.04 (GCC 13): the GCC 11 TSan runtime on 22.04 does not intercept pthread_cond_clockwait and reports
+  # false "double lock" errors inside JUCE's WaitableEvent.
   linux-tsan:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Allow TSan's memory layout on newer kernels
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y $DEPS
       - name: Cache compiler output
