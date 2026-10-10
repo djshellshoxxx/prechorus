@@ -734,6 +734,29 @@ public:
             logMessage ("fuzz worst output peak: " + juce::String (worstPeak));
             expect (worstPeak < 16.0f);                 // not a limiter test: catches runaway gain / filter blow-ups
         }
+
+        beginTest ("editor constructs, lays out and paints headlessly (set PRECHORUS_SNAPSHOT_DIR to save a PNG)");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.render();
+            std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+            expect (ed != nullptr);
+            if (ed != nullptr)
+            {
+                expect (ed->getWidth() > 400 && ed->getHeight() > 300);
+                auto img = ed->createComponentSnapshot (ed->getLocalBounds());
+                expect (img.isValid());
+                const auto dir = juce::SystemStats::getEnvironmentVariable ("PRECHORUS_SNAPSHOT_DIR", {});
+                if (dir.isNotEmpty() && img.isValid())
+                {
+                    juce::File out = juce::File (dir).getChildFile ("editor.png");
+                    juce::FileOutputStream fos (out);
+                    if (fos.openedOk()) { fos.setPosition (0); fos.truncate(); juce::PNGImageFormat().writeImageToStream (img, fos); }
+                }
+            }
+        }
     }
 };
 
