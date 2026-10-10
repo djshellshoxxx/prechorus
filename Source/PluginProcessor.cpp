@@ -102,6 +102,31 @@ namespace
     }
 }
 
+class PreChorusProcessor::RenderWorker : public juce::Thread
+{
+public:
+    explicit RenderWorker (PreChorusProcessor& o) : juce::Thread ("PreChorus render"), owner (o) {}
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            if (! owner.renderRequested.exchange (false)) { wait (-1); continue; }
+            owner.renderInFlight.store (true);
+            const int gen = owner.renderRequestCount.load();
+            auto out = owner.buildRender();
+            if (out != nullptr && ! threadShouldExit())
+            {
+                juce::SpinLock::ScopedLockType l (owner.pendingLock);
+                owner.pendingRender = std::move (out);
+                owner.pendingGen = gen;
+            }
+            owner.renderInFlight.store (false);
+        }
+    }
+private:
+    PreChorusProcessor& owner;
+};
+
 PreChorusProcessor::PreChorusProcessor()
     : AudioProcessor (BusesProperties()
                         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
@@ -123,6 +148,8 @@ PreChorusProcessor::PreChorusProcessor()
     captureSlotFilled[0] = true;
 
     undoBaseline = soundDesignSnapshot();
+    renderWorker = std::make_unique<RenderWorker> (*this);
+    renderWorker->startThread (juce::Thread::Priority::low);
     startTimerHz (30);
     dirty = true;
 }
@@ -130,6 +157,12 @@ PreChorusProcessor::PreChorusProcessor()
 PreChorusProcessor::~PreChorusProcessor()
 {
     stopTimer();
+    if (renderWorker != nullptr)
+    {
+        renderWorker->signalThreadShouldExit();
+        renderWorker->notify();
+        renderWorker->stopThread (10000);
+    }
     for (auto* p : getParameters())
         apvts.removeParameterListener (static_cast<juce::AudioProcessorParameterWithID*> (p)->paramID, this);
 }
@@ -492,10 +525,33 @@ void PreChorusProcessor::timerCallback()
     // Drop retired renders only once the audio thread no longer holds them.
     retiredRendered.erase (std::remove_if (retiredRendered.begin(), retiredRendered.end(),
                                            [] (const auto& r) { return r.use_count() == 1; }), retiredRendered.end());
+
+    // Pick up a finished background render.
+    std::shared_ptr<RenderedSample> got;
+    int gotGen = 0;
+    {
+        juce::SpinLock::ScopedLockType l (pendingLock);
+        got = std::move (pendingRender);
+        gotGen = pendingGen;
+    }
+    if (got != nullptr && gotGen >= ignoreBelowGen)
+    {
+        publishRender (std::move (got));
+        if (previewGenWanted > 0 && gotGen >= previewGenWanted) { previewGenWanted = 0; triggerPreview(); }
+    }
+
     if (dirty.exchange (false))
     {
-        render();
-        if (previewAfterRender.exchange (false)) triggerPreview();
+        if (previewAfterRender.exchange (false)) previewGenWanted = renderRequestCount.load() + 1;
+        if (asyncRender && renderWorker != nullptr)
+        {
+            requestAsyncRender();
+        }
+        else
+        {
+            render();
+            if (previewGenWanted > 0) { previewGenWanted = 0; triggerPreview(); }
+        }
     }
 }
 
@@ -571,7 +627,7 @@ void PreChorusProcessor::commitFinishedCapture()
 
 // ---------------- Swarm, Shaping & Spatial Render Engine ----------------
 
-void PreChorusProcessor::render()
+std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
 {
     auto out = std::make_shared<RenderedSample>();
     const double sr = hostSampleRate > 1000.0 ? hostSampleRate : 44100.0;
@@ -631,11 +687,11 @@ void PreChorusProcessor::render()
         }
     }
 
-    if (source.getNumSamples() == 0) return;
+    if (source.getNumSamples() == 0) return nullptr;
     resampleTo (source, rawSR, sr);
 
     const int srcLen = source.getNumSamples();
-    if (srcLen < 128) return;
+    if (srcLen < 128) return nullptr;
 
     // 2. Swell Duration
     int beats = 0;
@@ -703,6 +759,7 @@ void PreChorusProcessor::render()
     // Render Voices
     for (int v = 0; v < numVoices; ++v)
     {
+        if (juce::Thread::currentThreadShouldExit()) return nullptr;     // shutting down the background worker
         const float vNorm = (numVoices > 1) ? (float) v / (float) (numVoices - 1) : 0.5f;
 
         const float hTime = (rnd.nextFloat() * 2.0f - 1.0f) * humanizeAmt * 0.015f;
@@ -1191,7 +1248,13 @@ void PreChorusProcessor::render()
 
     out->audio = std::move (outBuf);
     out->hitIndex = hitOut;
+    return out;
+}
 
+void PreChorusProcessor::publishRender (std::shared_ptr<RenderedSample> out)
+{
+    if (out == nullptr) return;
+    const double sr = out->sampleRate;
     const int maxLatency = (int) (sr * kMaxLatencySeconds);
     const int latency = juce::jlimit (0, maxLatency, out->hitIndex > 0 ? out->hitIndex : 0);
     {
@@ -1203,6 +1266,21 @@ void PreChorusProcessor::render()
     reportedLatency.store (newLatency);
     if (newLatency != getLatencySamples()) setLatencySamples (newLatency);
 }
+
+void PreChorusProcessor::render()
+{
+    ++renderRequestCount;
+    ignoreBelowGen = renderRequestCount.load();       // any background job that started earlier is now stale
+    publishRender (buildRender());
+}
+
+void PreChorusProcessor::requestAsyncRender()
+{
+    ++renderRequestCount;
+    renderRequested.store (true);
+    renderWorker->notify();
+}
+
 
 // ---------------- Realtime Process Block with Ducking ----------------
 
@@ -1573,7 +1651,7 @@ void PreChorusProcessor::prevSample()
 
 bool PreChorusProcessor::exportWav (const juce::File& dest)
 {
-    if (dirty.exchange (false)) render();
+    if (dirty.exchange (false) || renderRequested.load() || renderInFlight.load()) render();   // never export a stale render
     auto r = getRendered();
     if (r == nullptr || r->audio.getNumSamples() == 0) return false;
     const int n = r->audio.getNumSamples();

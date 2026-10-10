@@ -603,6 +603,48 @@ public:
             tick();
             expect (! p.canUndo());
         }
+
+        beginTest ("background render publishes without blocking, never overwrites a newer sync render, and audio keeps running");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 256);
+            p.setParam (IDs::voiceCount, 32.0f);
+            expect (p.getRendered() == nullptr);
+
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            p.timerCallback();                            // consumes the startup dirty flag and hands it to the worker
+            const double kickMs = juce::Time::getMillisecondCounterHiRes() - t0;
+            expect (kickMs < 100.0);                      // the message thread is not blocked by the render
+
+            // audio thread keeps processing while the worker renders
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer midi;
+            int blocks = 0;
+            const double deadline = juce::Time::getMillisecondCounterHiRes() + 20000.0;
+            while (p.getRendered() == nullptr && juce::Time::getMillisecondCounterHiRes() < deadline)
+            {
+                buf.clear();
+                p.processBlock (buf, midi);
+                ++blocks;
+                p.timerCallback();
+                juce::Thread::sleep (2);
+            }
+            expect (p.getRendered() != nullptr);
+            expect (blocks > 0);
+
+            // a change made after a synchronous render wins over any older in-flight result
+            p.setParam (IDs::space, 0.77f);
+            p.timerCallback();                            // starts a background job
+            const double jobDeadline = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+            while (! p.renderInFlight.load() && juce::Time::getMillisecondCounterHiRes() < jobDeadline) juce::Thread::sleep (1);
+            expect (p.renderInFlight.load());             // the job really is running before the sync render
+            p.setParam (IDs::space, 0.11f);
+            p.render();                                   // synchronous: makes the older job stale
+            auto syncResult = p.getRendered();
+            juce::Thread::sleep (1500);
+            p.timerCallback();                            // would publish the stale result if it were not discarded
+            expect (p.getRendered() == syncResult);
+        }
     }
 };
 

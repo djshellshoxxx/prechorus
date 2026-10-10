@@ -219,7 +219,13 @@ private:
     juce::ValueTree soundDesignSnapshot() const;
     void applySoundDesignSnapshot (const juce::ValueTree& t);
     void timerCallback() override;
+    // Rendering: buildRender() is thread-safe (atomics + locked source copy); publishRender() is message-thread only.
+    // The timer hands dirty state to a background worker so a 0.5 s+ render never freezes the editor or the host UI.
+    // render() stays available as a synchronous build+publish (tests, export).
+    std::shared_ptr<RenderedSample> buildRender();
+    void publishRender (std::shared_ptr<RenderedSample> out);
     void render();
+    void requestAsyncRender();
     void updateUndoTracking();
     void refreshFolderList (const juce::File& f);
     static juce::String encodeAudio (const juce::AudioBuffer<float>& b, double sr);
@@ -274,6 +280,17 @@ private:
 
     // Sidechain ducking envelope follower
     float duckEnv = 0.0f;
+
+    class RenderWorker;
+    std::unique_ptr<RenderWorker> renderWorker;
+    bool asyncRender = true;
+    std::atomic<bool> renderRequested { false }, renderInFlight { false };
+    std::atomic<int> renderRequestCount { 0 };
+    juce::SpinLock pendingLock;
+    std::shared_ptr<RenderedSample> pendingRender;
+    int pendingGen = 0;
+    int ignoreBelowGen = 0;      // results from jobs that started before a synchronous render are stale
+    int previewGenWanted = 0;    // preview-after-load fires once a render that includes the new source is published
 
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;
