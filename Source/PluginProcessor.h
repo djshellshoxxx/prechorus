@@ -204,7 +204,8 @@ public:
     bool embedAudio = true;
     int getEmbedSkipped() const { return lastEmbedSkipped.load(); }
 
-    // Editor view preference (stored with host state, not a sound parameter)
+    // Editor view preferences (stored with host state, not sound parameters)
+    bool simpleView = true;      // SIMPLE (one-knob build) vs FULL view; new instances start simple
     int uiWidth = 0, uiHeight = 0;
     static constexpr int kStateVersion = 2;
     std::shared_ptr<const RenderedSample> getRendered() const;

@@ -17,6 +17,10 @@ intimate until it lands on your drop. You hear the cloud *before* the event — 
      *hit* (not the start of the swell) lands exactly on the note; or
    - **Print it:** drag the **DRAG TO DAW** pad onto an audio track, or use **EXPORT WAV**.
 
+> **Simple and Full view.** A new plug-in opens in **Simple view**: the seven controls that matter most (MACRO, VOICES, LENGTH, PAN SPREAD,
+> TILT EQ, SPACE, SWARM WET). Click **FULL VIEW** (below the preset menu) for every control, and **SIMPLE VIEW** to go back. Switching never
+> changes your settings.
+
 ## 2. Workflows
 
 **Vocal build into the chorus.** Capture or load the last word of the verse, preset *Pop Vocal Double* or *Cinematic Choir Pad*, **Sync** on

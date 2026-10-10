@@ -1797,6 +1797,7 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("activeSlot", activeSlot.load(), nullptr);
     state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    state.setProperty ("simpleView", simpleView, nullptr);
     state.setProperty ("embedAudio", embedAudio, nullptr);
     state.setProperty ("maxSourceSec", maxSourceSec.load(), nullptr);
     if (uiWidth > 0) { state.setProperty ("uiWidth", uiWidth, nullptr); state.setProperty ("uiHeight", uiHeight, nullptr); }
@@ -1850,6 +1851,7 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     state.removeChild (embed, nullptr);   // keep the (large) audio out of the live parameter tree
     apvts.replaceState (state);
 
+    simpleView = (bool) state.getProperty ("simpleView", false);   // projects from v0.0.1 keep the full view
     embedAudio = (bool) state.getProperty ("embedAudio", true);
     setMaxSourceSeconds ((int) state.getProperty ("maxSourceSec", 12));   // projects from v0.0.1 keep their 12 s limit
     bool loadedRestored = false;

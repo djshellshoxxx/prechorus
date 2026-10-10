@@ -168,7 +168,7 @@ private:
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" },
                      regenSeedButton { "REGEN" }, optionsButton { "OPTIONS" }, helpButton { "?" },
-                     abButton { "A" }, abCopyButton { "COPY" };
+                     abButton { "A" }, abCopyButton { "COPY" }, viewButton { "FULL VIEW" };
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };

@@ -757,6 +757,25 @@ public:
                 }
             }
         }
+
+        beginTest ("simple/full view preference is stored with the project; old projects open in full view");
+        {
+            PreChorusProcessor a;
+            expect (a.simpleView);                                   // new instances start simple
+            a.simpleView = false;
+            juce::MemoryBlock blob; a.getStateInformation (blob);
+            PreChorusProcessor b; b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (! b.simpleView);
+            a.simpleView = true; a.getStateInformation (blob);
+            b.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (b.simpleView);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+            xml->removeAttribute ("simpleView");
+            juce::MemoryBlock legacy; juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+            PreChorusProcessor c; c.setStateInformation (legacy.getData(), (int) legacy.getSize());
+            expect (! c.simpleView);
+        }
     }
 };
 

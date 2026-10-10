@@ -684,6 +684,16 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (helpButton);
     addAndMakeVisible (abButton);
     addAndMakeVisible (abCopyButton);
+    addAndMakeVisible (viewButton);
+    viewButton.setButtonText (proc.simpleView ? "FULL VIEW" : "SIMPLE VIEW");
+    viewButton.onClick = [this] {
+        proc.simpleView = ! proc.simpleView;
+        viewButton.setButtonText (proc.simpleView ? "FULL VIEW" : "SIMPLE VIEW");
+        resized();
+        repaint();
+        setStatus (proc.simpleView ? "Simple view: the main build controls. Click FULL VIEW for every control."
+                                   : "Full view: every control.");
+    };
     abButton.onClick = [this] {
         proc.switchABSlot();
         setStatus (juce::String ("A/B: now editing ") + (proc.isSlotBActive() ? "B." : "A."));
@@ -1016,6 +1026,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     alignToggle.setTooltip ("Reports the swell length as latency and delays the dry input to match, so the target hit lands exactly on the MIDI note.");
     keytrackToggle.setTooltip ("MIDI notes transpose the swarm (C4 = original pitch) so it can be played like an instrument.");
     abButton.setTooltip ("Switch between two sound-design snapshots (A/B compare). Shortcut: B.");
+    viewButton.setTooltip ("Switch between the SIMPLE view (the main build controls) and the FULL view (every control). Your settings are never changed by switching.");
     abCopyButton.setTooltip ("Copy the current A/B slot's settings into the other slot.");
     pitchTension.setTooltip ("Pitch sweep curve: drag up/down to bend, double-click to reset to linear.");
     waveform.setTooltip ("Rendered result (swarm + amber target hit). Drag the white volume points; click elsewhere to preview.");
@@ -1363,6 +1374,8 @@ void PreChorusEditor::resized()
     lockButton.setBounds (capStrip.removeFromLeft (48));
 
     confidenceLabel.setBounds (capStrip.removeFromRight (170));
+    capStrip.removeFromRight (6);
+    viewButton.setBounds (capStrip.removeFromRight (86));
 
     area.removeFromTop (3);
     auto statusRow = area.removeFromTop (18);
@@ -1398,6 +1411,7 @@ void PreChorusEditor::resized()
 
     // 5. Knob Panels (Rows A & B)
     area.removeFromTop (8);
+    const auto knobArea = area;
     const int rowH = (area.getHeight() - 8) / 2;
     auto rowA = area.removeFromTop (rowH);
     area.removeFromTop (8);
@@ -1449,6 +1463,25 @@ void PreChorusEditor::resized()
         right.removeFromTop (2);
         pitchTension.setBounds (right.withSizeKeepingCentre (50, juce::jmin (50, right.getHeight())));
         layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension, kTrimStart, kTrimEnd });
+    }
+
+    // Simple view: only the main build controls, laid out large. (Pure layout switch: no parameters change.)
+    const bool simple = proc.simpleView;
+    const std::initializer_list<Knob*> simpleKnobs { kMacro, kVoiceCount, kTail, kPanSpread, kTilt, kSpace, kWet };
+    for (auto& k : knobs)
+    {
+        const bool show = ! simple || std::find (simpleKnobs.begin(), simpleKnobs.end(), k.get()) != simpleKnobs.end();
+        k->slider.setVisible (show);
+        k->label.setVisible (show);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &dirCombo, &scaleCombo, &postReleaseCombo, &rangeCombo, &rangeLabel, &pitchTension })
+        c->setVisible (! simple);
+    if (simple)
+    {
+        groups.clear();
+        groups.push_back ({ "ONE-KNOB BUILD   (FULL VIEW shows every control)", knobArea });
+        auto simpleRow = knobArea.reduced (30, 22).withTrimmedTop (14);
+        layoutKnobs (simpleRow.withSizeKeepingCentre (simpleRow.getWidth(), juce::jmin (simpleRow.getHeight(), 250)), simpleKnobs);
     }
 
     const auto t = juce::AffineTransform::scale (scale);

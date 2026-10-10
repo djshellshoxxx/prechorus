@@ -9,3 +9,4 @@
 - Live captures were lost when a project was reloaded.
 - Editing sound controls no longer freezes the plug-in (or the host) for about half a second per change: the swarm now renders in the background.
 - Keytrack: the hit now lands on the reported latency for every transposed note (faster notes start later, slower notes start further into the swarm).
+- **Simple view**: new instances open with just the main build controls (MACRO, VOICES, LENGTH, PAN SPREAD, TILT EQ, SPACE, SWARM WET) laid out large. The FULL VIEW button shows every control; switching never changes your settings. Projects saved by v0.0.1 open in the full view.
