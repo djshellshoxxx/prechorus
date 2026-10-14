@@ -6,21 +6,10 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "EditorWidgets.h"
 
 namespace PCColours
 {
-    const juce::Colour bg       { 0xff0b0e14 };
-    const juce::Colour panel    { 0xff151821 };
-    const juce::Colour panel2   { 0xff1c202d };
-    const juce::Colour outline  { 0xff2a3040 };
-    const juce::Colour text     { 0xffe6eaf2 };
-    const juce::Colour textDim  { 0xff8992a6 };
-    const juce::Colour accent   { 0xffa855f7 }; // Lush choral violet
-    const juce::Colour neon     { 0xff06b6d4 }; // Cyber cyan
-    const juce::Colour hitCol   { 0xfff59e0b }; // Climax amber
-    const juce::Colour recCol   { 0xffef4444 }; // Recording ruby red
-    const juce::Colour freezeCol{ 0xff38bdf8 }; // Ice blue
-
     juce::Colour swellColour (float toneHz, float bassCutHz);
 }
 
@@ -36,6 +25,7 @@ public:
     void drawComboBox (juce::Graphics&, int, int, bool, int, int, int, int, juce::ComboBox&) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (10.5f)); }
     void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override;
+    void refreshColours();
 };
 
 // Animated 32-Voice Convergence & Orbital Constellation
@@ -97,6 +87,38 @@ private:
     float downT = 0, shown = -9; int downY = 0;
 };
 
+// Live input level with the capture threshold marker (so you can see what will trigger a capture)
+class InputLevelBar : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    explicit InputLevelBar (PreChorusProcessor& p) : proc (p)
+    {
+        setTitle ("Input level"); setDescription ("Live input level and the capture threshold");
+        startTimerHz (20);
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (PCColours::panel2); g.fillRoundedRectangle (r, 3.0f);
+        auto dbToX = [&] (float db) { return r.getX() + juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f) * r.getWidth(); };
+        const float db = juce::Decibels::gainToDecibels (shown, -60.0f);
+        g.setColour (db > -6.0f ? PCColours::hitCol : PCColours::neon);
+        g.fillRoundedRectangle (r.withRight (juce::jmax (r.getX() + 1.0f, dbToX (db))), 3.0f);
+        g.setColour (PCColours::recCol);
+        g.drawVerticalLine ((int) dbToX (proc.param (IDs::thresh)), r.getY(), r.getBottom());
+        g.setColour (PCColours::outline); g.drawRoundedRectangle (r, 3.0f, 1.0f);
+    }
+private:
+    void timerCallback() override
+    {
+        const float m = proc.getLiveInputMeter();
+        const float next = juce::jmax (m, shown * 0.85f);
+        if (std::abs (next - shown) > 1.0e-4f || ! juce::exactlyEqual (lastThresh, proc.param (IDs::thresh))) { shown = next; lastThresh = proc.param (IDs::thresh); repaint(); }
+    }
+    PreChorusProcessor& proc;
+    float shown = 0.0f, lastThresh = 0.0f;
+};
+
 class DragOutPad : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -141,7 +163,7 @@ public:
 private:
     struct Knob
     {
-        juce::Slider slider; juce::Label label;
+        PCSlider slider; juce::Label label; juce::String id; juce::String baseName;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
     };
     struct Group { juce::String name; juce::Rectangle<int> bounds; };
@@ -153,12 +175,23 @@ private:
     void doUndoRedo (bool redo);
     void applyTooltipSetting();
     void showOptionsMenu();
-    void refreshPresetMenu();
+    void openPresetBrowser();
+    void stepPreset (int direction);
+    void loadPresetEntry (const PresetLibrary::Entry&);
+    void savePresetDialog();
+    void showKnobMenu (Knob&);
+    void showThemeMenu();
+    void showExportMenu();
+    void runExport();
+    void updateLearnVisuals();
+    void applyAccessibility();
     void openHelp();
     void rebuildWaveform() { waveform.rebuild(); }
-    static constexpr int kBaseW = 1320, kBaseH = 860;
-    juce::Array<juce::File> userPresetFiles;
-    int lastPresetId = 0;
+    static constexpr int kBaseW = 1320, kBaseH = 996;
+    std::unique_ptr<PresetLibrary> library;
+    juce::String currentPresetKey;
+    std::shared_ptr<juce::FileChooser> presetChooser;
+    juce::Component::SafePointer<juce::CallOutBox> browserBox;
 
     PreChorusProcessor& proc;
     PCLookAndFeel lnf;
@@ -173,8 +206,12 @@ private:
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
-    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo, presetCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt;
+    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo, stutterGridCombo, targetCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt, stutterGridAtt, targetAtt;
+    juce::TextButton presetButton { "PRESETS" }, presetPrevButton { "<" }, presetNextButton { ">" },
+                     exportOptionsButton { "v" }, themeButton { "v" }, retakeButton { "RETAKE" }, swarmViewButton { "SWARM VIEW" };
+    bool showSwarm = false;
+    juce::String lastSummaryShown;
     std::array<juce::TextButton, 8> historySlotButtons;
 
     // Toggles & Alignment
@@ -185,6 +222,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
 
     WaveformDisplay waveform;
+    SwarmView swarmView;
+    StepPatternEditor stepEditor;
+    InputLevelBar levelBar;
     VoiceOrbitVisualizer visualizer;
     DragOutPad dragPad;
     TensionBox pitchTension;
@@ -209,6 +249,9 @@ private:
 
     // Pitch & Volume Envelopes
     Knob *kPitch, *kVolStart, *kVolEnd, *kVolTension, *kTrimStart, *kTrimEnd;
+
+    // Stutter grid, layers, targeting & morph
+    Knob *kStutterSwing, *kLayRiser, *kLayRev, *kLaySub, *kLayImpact, *kLayTone, *kTgtThresh, *kMorph;
 
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;

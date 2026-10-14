@@ -24,8 +24,21 @@ namespace PCColours
 
 // ---------------- LookAndFeel ----------------
 
-PCLookAndFeel::PCLookAndFeel()
+PCLookAndFeel::PCLookAndFeel() { refreshColours(); }
+
+void PCLookAndFeel::refreshColours()
 {
+    setColour (juce::TextEditor::backgroundColourId, PCColours::panel);
+    setColour (juce::TextEditor::textColourId, PCColours::text);
+    setColour (juce::TextEditor::outlineColourId, PCColours::outline);
+    setColour (juce::TextEditor::focusedOutlineColourId, PCColours::neon);
+    setColour (juce::ListBox::backgroundColourId, PCColours::panel);
+    setColour (juce::AlertWindow::backgroundColourId, PCColours::panel2);
+    setColour (juce::AlertWindow::textColourId, PCColours::text);
+    setColour (juce::Slider::textBoxTextColourId, PCColours::textDim);
+    setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    setColour (juce::Slider::textBoxHighlightColourId, PCColours::accent.withAlpha (0.4f));
     setColour (juce::Label::textColourId, PCColours::text);
     setColour (juce::TextButton::textColourOffId, PCColours::text);
     setColour (juce::TextButton::textColourOnId, PCColours::text);
@@ -64,6 +77,12 @@ void PCLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, in
     g.fillEllipse (center.x - dialRadius, center.y - dialRadius, dialRadius * 2.0f, dialRadius * 2.0f);
     g.setColour (PCColours::outline.brighter (0.08f));
     g.drawEllipse (center.x - dialRadius, center.y - dialRadius, dialRadius * 2.0f, dialRadius * 2.0f, 1.0f);
+
+    if (s.hasKeyboardFocus (false))
+    {
+        g.setColour (PCColours::neon);
+        g.drawEllipse (bounds.reduced (0.5f), 1.6f);
+    }
 
     juce::Path p;
     const float pLen = dialRadius * 0.65f;
@@ -494,14 +513,16 @@ void DragOutPad::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
     g.setColour (over ? PCColours::neon : PCColours::text);
     g.drawText ("DRAG TO DAW", getLocalBounds(), juce::Justification::centred);
+    if (hasKeyboardFocus (false)) { g.setColour (PCColours::neon); g.drawRoundedRectangle (r, 4.0f, 1.6f); }
 }
 
 void DragOutPad::mouseDrag (const juce::MouseEvent&)
 {
     if (dragging) return;
     dragging = true;
-    auto tempFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("PreChorus_Swarm.wav");
-    if (proc.exportWav (tempFile))
+    auto tempFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("PreChorus_Swarm." + PreChorusProcessor::exportExtension (proc.exportSettings));
+    if (proc.exportAudio (tempFile))
     {
         juce::StringArray files;
         files.add (tempFile.getFullPathName());
@@ -632,9 +653,11 @@ void HelpOverlay::resized()
 // ---------------- PreChorus Editor ----------------
 
 PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), visualizer (p), dragPad (p),
+    : AudioProcessorEditor (&p), proc (p), waveform (p), swarmView (p), stepEditor (p), levelBar (p), visualizer (p), dragPad (p),
       pitchTension (p, IDs::pitchTension)
 {
+    PCColours::applyHighContrast (proc.highContrast);
+    lnf.refreshColours();
     setLookAndFeel (&lnf);
     applyTooltipSetting();
 
@@ -748,19 +771,27 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     optionsButton.onClick   = [this] { showOptionsMenu(); };
     helpButton.onClick      = [this] { openHelp(); };
 
-    exportButton.onClick = [this] {
-        chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell WAV", juce::File(), "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-            [this] (const juce::FileChooser& fc) {
-                auto f = fc.getResult();
-                if (f != juce::File())
-                {
-                    const auto out = f.withFileExtension ("wav");
-                    const bool ok = proc.exportWav (out);
-                    setStatus (ok ? "Exported: " + out.getFileName() : "WAV export failed.");
-                }
-            });
+    exportButton.onClick = [this] { runExport(); };
+    exportOptionsButton.onClick = [this] { showExportMenu(); };
+    themeButton.onClick = [this] { showThemeMenu(); };
+    retakeButton.onClick = [this] {
+        proc.retakeCapture();
+        setStatus ("Retake: armed. The new take replaces the previous one (unless that slot is locked).");
     };
+    swarmViewButton.setClickingTogglesState (true);
+    swarmViewButton.onClick = [this] {
+        showSwarm = swarmViewButton.getToggleState();
+        waveform.setVisible (! showSwarm);
+        swarmView.setVisible (showSwarm);
+        swarmViewButton.setButtonText (showSwarm ? "WAVEFORM" : "SWARM VIEW");
+        setStatus (showSwarm ? "Swarm view: one row per voice (top = left pan). Click to preview." : "Waveform view.");
+    };
+    for (auto* b : { &exportOptionsButton, &themeButton, &retakeButton, &swarmViewButton, &presetButton, &presetPrevButton, &presetNextButton })
+        addAndMakeVisible (b);
+    addAndMakeVisible (levelBar);
+    addAndMakeVisible (swarmView);
+    swarmView.setVisible (false);
+    addAndMakeVisible (stepEditor);
 
     // Combos
     sourceModeCombo.addItemList (juce::StringArray { "Live Capture", "Loaded Sample", "Hybrid Layer", "Slice Scatter" }, 1);
@@ -779,7 +810,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (postReleaseCombo);
     postReleaseAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::postRelease, postReleaseCombo);
 
-    charCombo.addItemList (juce::StringArray { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir", "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral" }, 1);
+    charCombo.addItemList (juce::StringArray { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir", "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral", "Vowel Choir", "Stadium Crowd", "Glitch Scatter" }, 1);
     addAndMakeVisible (charCombo);
     charAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::character, charCombo);
 
@@ -787,49 +818,18 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (seqCombo);
     seqAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::sequence, seqCombo);
 
-    presetCombo.setTextWhenNothingSelected ("PRESETS");
-    refreshPresetMenu();
-    addAndMakeVisible (presetCombo);
-    presetCombo.onChange = [this] {
-        const int id = presetCombo.getSelectedId();
-        if (id <= 0) return;
-        if (id <= 100)
-        {
-            proc.loadFactoryPreset (id - 1);
-            lastPresetId = id;
-            setStatus ("Preset: " + presetCombo.getText());
-        }
-        else if (id < 900)
-        {
-            const auto f = userPresetFiles[id - 101];
-            juce::String err;
-            if (proc.loadUserPreset (f, err)) { lastPresetId = id; setStatus ("User preset: " + f.getFileNameWithoutExtension()); }
-            else { presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification); setStatus ("Preset load failed: " + err); }
-        }
-        else
-        {
-            presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification);
-            const bool saving = (id == 900);
-            auto folder = PreChorusProcessor::getUserPresetFolder();
-            folder.createDirectory();
-            chooser = std::make_unique<juce::FileChooser> (saving ? "Save PreChorus Preset" : "Load PreChorus Preset", folder, "*.pcpreset");
-            const int chooserFlags = saving ? (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting)
-                                     : (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles);
-            chooser->launchAsync (chooserFlags, [this, saving] (const juce::FileChooser& fc) {
-                auto f = fc.getResult();
-                if (f == juce::File()) return;
-                juce::String err;
-                if (saving)
-                {
-                    f = f.withFileExtension ("pcpreset");
-                    setStatus (proc.saveUserPreset (f, err) ? "Saved preset: " + f.getFileNameWithoutExtension() : "Preset save failed: " + err);
-                }
-                else
-                    setStatus (proc.loadUserPreset (f, err) ? "User preset: " + f.getFileNameWithoutExtension() : "Preset load failed: " + err);
-                refreshPresetMenu();
-            });
-        }
-    };
+    stutterGridCombo.addItemList (juce::StringArray { "Straight", "Triplet", "Dotted", "Custom" }, 1);
+    addAndMakeVisible (stutterGridCombo);
+    stutterGridAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::stutterGrid, stutterGridCombo);
+    targetCombo.addItemList (juce::StringArray { "MIDI Note", "Next Bar Line", "Loop End", "Input Transient" }, 1);
+    addAndMakeVisible (targetCombo);
+    targetAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::tgtSource, targetCombo);
+
+    library = std::make_unique<PresetLibrary> (PreChorusProcessor::getUserPresetFolder(),
+                                               PreChorusProcessor::getUserPresetFolder().getParentDirectory().getChildFile ("settings.xml"));
+    presetButton.onClick = [this] { openPresetBrowser(); };
+    presetPrevButton.onClick = [this] { stepPreset (-1); };
+    presetNextButton.onClick = [this] { stepPreset (1); };
 
     // Live Capture Controls & History
     addAndMakeVisible (armButton);
@@ -954,6 +954,18 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     kTrimEnd    = &makeKnob (IDs::trimEnd,    "TRIM OUT");
     kStutter->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
 
+    // Knobs - Stutter grid, layers, targeting & morph
+    kStutterSwing = &makeKnob (IDs::stutterSwing, "SWING");
+    kLayRiser     = &makeKnob (IDs::layRiser,     "RISER");
+    kLayRev       = &makeKnob (IDs::layRev,       "REV CYMBAL");
+    kLaySub       = &makeKnob (IDs::laySub,       "SUB DROP");
+    kLayImpact    = &makeKnob (IDs::layImpact,    "IMPACT");
+    kLayTone      = &makeKnob (IDs::layTone,      "LAYER TONE");
+    kTgtThresh    = &makeKnob (IDs::tgtThresh,    "TRANSIENT");
+    kMorph        = &makeKnob (IDs::morph,        "A/B MORPH");
+    kStutterSwing->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::hitCol);
+    kMorph->slider.setColour (juce::Slider::rotarySliderFillColourId, PCColours::neon);
+
     // Knob tooltips describe the audible result (spec 7.1), not just the label.
     const std::pair<Knob*, const char*> knobTips[] = {
         { kVoiceCount, "Number of rendered ensemble voices (1-32). More voices = denser, wider swarm." },
@@ -1001,7 +1013,15 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
         { kVolEnd, "Volume envelope level at the end (also draggable on the waveform)." },
         { kVolTension, "Curve of the volume envelope between start and end." },
         { kTrimStart, "Crops the start of the rendered result (fraction of full length)." },
-        { kTrimEnd, "Crops the end of the rendered result (fraction of full length)." } };
+        { kTrimEnd, "Crops the end of the rendered result (fraction of full length)." },
+        { kStutterSwing, "Swing for the build stutter: delays every second step (0-60%)." },
+        { kLayRiser, "Synthesised noise riser that sweeps up into the hit." },
+        { kLayRev, "Reverse cymbal swell that ends exactly on the hit." },
+        { kLaySub, "Sub-bass drop (62 Hz down to 30 Hz) that starts on the hit." },
+        { kLayImpact, "Short noise + sub thump on the hit." },
+        { kLayTone, "Brightness of the riser, cymbal and impact layers." },
+        { kTgtThresh, "Input level (dBFS) that triggers the swarm when Target Source is Input Transient." },
+        { kMorph, "Blend between the A and B snapshots (store A, press A>B, edit B). Re-renders when you stop moving it." } };
     for (auto& [k, tip] : knobTips)
         k->slider.setTooltip (juce::String (tip) + " Double-click to reset.");
 
@@ -1015,7 +1035,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     playButton.setTooltip ("Trigger the current rendered swarm preview. Shortcut: Space.");
     exportButton.setTooltip ("Export the current rendered result as a stereo 24-bit WAV.");
     resetButton.setTooltip ("Reset the main sound-design edits without replacing the loaded or captured source.");
-    randomButton.setTooltip ("Randomize musical sound-design parameters while preserving the source. Shortcut: R.");
+    randomButton.setTooltip ("Randomize musical sound-design parameters while preserving the source and any locked groups. Shortcut: R.");
     regenSeedButton.setTooltip ("Generate a new deterministic swarm seed without changing the other controls. Shortcut: G.");
     optionsButton.setTooltip ("Interface options: tooltips and window size.");
     helpButton.setTooltip ("Open workflow and control help. Shortcut: H or F1.");
@@ -1029,7 +1049,17 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     postReleaseCombo.setTooltip ("Choose what the swarm does after the target impact.");
     charCombo.setTooltip ("Choose the per-voice character/color model.");
     seqCombo.setTooltip ("Restrict automatic target triggering to the selected beat/bar cycle.");
-    presetCombo.setTooltip ("Factory and user presets, plus Save/Load. Presets never replace the source audio or capture history.");
+    presetButton.setTooltip ("Open the preset browser: search, tags, favorites, user presets and banks. Presets never replace the source audio or capture history.");
+    presetPrevButton.setTooltip ("Previous preset in the list.");
+    presetNextButton.setTooltip ("Next preset in the list.");
+    exportOptionsButton.setTooltip ("Export options: format (WAV 16/24/32f, FLAC), sample rate, normalise, trim silent tail.");
+    themeButton.setTooltip ("Randomize themes (Subtle, Wide, Dark, Wild, Tight, Cinematic) and lock groups that randomize must leave alone.");
+    retakeButton.setTooltip ("Record the last capture again into the same slot.");
+    swarmViewButton.setTooltip ("Switch between the rendered waveform and the per-voice swarm timeline.");
+    stutterGridCombo.setTooltip ("Build stutter rhythm: straight, triplet, dotted, or your own 16-step pattern.");
+    targetCombo.setTooltip ("What triggers the swarm: MIDI notes, the next bar line, the loop end, or an input transient. The automatic modes need the host to be playing.");
+    levelBar.setTooltip ("Live input level. The red line is the capture threshold.");
+    stepEditor.setTooltip ("16-step stutter pattern for the Custom grid. The right-most step is the one just before the hit.");
     freezeToggle.setTooltip ("Hold convergence at its current spread to create a sustained cloud.");
     revConvergeToggle.setTooltip ("Invert the motion so voices move from coherent toward scattered.");
     alignToggle.setTooltip ("Reports the swell length as latency and delays the dry input to match, so the target hit lands exactly on the MIDI note.");
@@ -1048,6 +1078,8 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     rangeCombo.setTooltip ("Set the maximum pitch sweep range.");
     reducedMotionToggle.setTooltip ("Stops decorative orbit and transient-flash animation while retaining the audio meters and functional waveform updates.");
 
+    applyAccessibility();
+    sendLookAndFeelChange();   // children created before the look-and-feel was applied pick it up (slider value boxes)
     addChildComponent (help);
     setResizable (true, true);
     setResizeLimits (kBaseW * 6 / 10, kBaseH * 6 / 10, kBaseW * 2, kBaseH * 2);
@@ -1062,6 +1094,14 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
 
 PreChorusEditor::~PreChorusEditor()
 {
+    if (browserBox != nullptr)
+    {
+        if (auto* content = browserBox->getChildComponent (0)) content->setLookAndFeel (nullptr);
+        browserBox->setLookAndFeel (nullptr);
+        browserBox->dismiss();
+        browserBox = nullptr;
+    }
+    proc.cancelMidiLearn();
     setLookAndFeel (nullptr);
 }
 
@@ -1075,6 +1115,8 @@ PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const 
     s.setColour (juce::Slider::rotarySliderFillColourId, PCColours::accent);
     addAndMakeVisible (s);
 
+    k->id = id;
+    k->baseName = textName;
     k->label.setText (textName, juce::dontSendNotification);
     k->label.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
     k->label.setJustificationType (juce::Justification::centred);
@@ -1089,7 +1131,9 @@ PreChorusEditor::Knob& PreChorusEditor::makeKnob (const juce::String& id, const 
     }
     k->att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, s);
     knobs.push_back (std::move (k));
-    return *knobs.back();
+    auto* knobPtr = knobs.back().get();
+    knobPtr->slider.onContextClick = [this, knobPtr] (const juce::MouseEvent&) { showKnobMenu (*knobPtr); };
+    return *knobPtr;
 }
 
 void PreChorusEditor::timerCallback()
@@ -1127,6 +1171,23 @@ void PreChorusEditor::timerCallback()
         const float db = juce::Decibels::gainToDecibels (outputPeak, -100.0f);
         outputLabel.setText ("OUT " + (db <= -99.9f ? juce::String ("-inf") : juce::String (db, 1)) + " dBFS", juce::dontSendNotification);
         outputLabel.setColour (juce::Label::textColourId, db > -6.0f ? PCColours::hitCol : PCColours::textDim);
+    }
+
+    {
+        const auto summary = proc.getLastCaptureSummary();
+        if (summary != lastSummaryShown) { lastSummaryShown = summary; if (summary.isNotEmpty()) setStatus (summary); }
+        const bool busy = proc.isCapturing() || proc.isCaptureArmed();
+        retakeButton.setEnabled (summary.isNotEmpty() && ! busy);
+        retakeButton.setAlpha (retakeButton.isEnabled() ? 1.0f : 0.45f);
+        const bool customGrid = (int) proc.param (IDs::stutterGrid) == 3;
+        stepEditor.setAlpha (customGrid ? 1.0f : 0.5f);
+        const bool transientMode = (int) proc.param (IDs::tgtSource) == 3;
+        kTgtThresh->slider.setEnabled (transientMode);
+        kTgtThresh->slider.setAlpha (transientMode ? 1.0f : 0.4f);
+        presetButton.setButtonText (currentPresetKey.isEmpty() ? juce::String ("PRESETS")
+                                                               : (currentPresetKey.startsWith ("F:") ? currentPresetKey.substring (2)
+                                                                                                     : currentPresetKey.substring (2).fromLastOccurrenceOf ("/", false, false).upToLastOccurrenceOf (".pcpreset", false, true)));
+        updateLearnVisuals();
     }
 
     abButton.setButtonText (proc.isSlotBActive() ? "B" : "A");
@@ -1192,6 +1253,7 @@ void PreChorusEditor::showOptionsMenu()
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
     menu.addItem (2, "Reduced motion", true, reducedMotionToggle.getToggleState());
+    menu.addItem (5, "High contrast", true, proc.highContrast);
     menu.addSectionHeader ("Edit");
     menu.addItem (10, "Undo  (Ctrl/Cmd+Z)", proc.canUndo());
     menu.addItem (11, "Redo  (Ctrl/Cmd+Shift+Z)", proc.canRedo());
@@ -1205,6 +1267,11 @@ void PreChorusEditor::showOptionsMenu()
         lengths.addItem (3000 + sec, juce::String (sec) + " seconds", true, proc.getMaxSourceSeconds() == sec);
     menu.addSubMenu ("Max source length", lengths);
     menu.addItem (3, "Store audio inside project", true, proc.embedAudio);
+    menu.addSectionHeader ("Capture");
+    menu.addItem (6, "Smart trim: remove silence around takes", true, proc.smartTrimCapture);
+    menu.addItem (7, "Normalise takes to -1 dBFS", true, proc.smartNormaliseCapture);
+    menu.addSectionHeader ("MIDI");
+    menu.addItem (8, "Clear all MIDI mappings");
     menu.addSectionHeader ("Support");
     menu.addItem (4, "Copy diagnostics to clipboard");
     juce::PopupMenu sizes;
@@ -1227,6 +1294,29 @@ void PreChorusEditor::showOptionsMenu()
                             else if (result == 10 || result == 11)
                             {
                                 doUndoRedo (result == 11);
+                            }
+                            else if (result == 5)
+                            {
+                                proc.highContrast = ! proc.highContrast;
+                                PCColours::applyHighContrast (proc.highContrast);
+                                lnf.refreshColours();
+                                for (auto& k : knobs) k->label.setColour (juce::Label::textColourId, PCColours::textDim);
+                                for (auto* l : { &fileLabel, &countLabel, &rangeLabel, &statusLabel }) l->setColour (juce::Label::textColourId, PCColours::textDim);
+                                title.setColour (juce::Label::textColourId, PCColours::text);
+                                subtitle.setColour (juce::Label::textColourId, PCColours::accent);
+                                sendLookAndFeelChange();
+                                repaint();
+                                setStatus (proc.highContrast ? "High contrast on." : "High contrast off.");
+                            }
+                            else if (result == 6) { proc.smartTrimCapture = ! proc.smartTrimCapture; setStatus (proc.smartTrimCapture ? "Smart trim on: silence around new takes is removed." : "Smart trim off."); }
+                            else if (result == 7) { proc.smartNormaliseCapture = ! proc.smartNormaliseCapture; setStatus (proc.smartNormaliseCapture ? "New takes are normalised to -1 dBFS." : "Take normalising off."); }
+                            else if (result == 8)
+                            {
+                                for (auto& k : knobs) proc.clearMidiMapping (k->id);
+                                for (auto id : { IDs::sourceMode, IDs::captureMode, IDs::captureSlot, IDs::captureLock, IDs::freeze, IDs::revConverge,
+                                                 IDs::postRelease, IDs::character, IDs::scaleLock, IDs::voiceDirection, IDs::stutterGrid, IDs::tgtSource })
+                                    proc.clearMidiMapping (id);
+                                setStatus ("All MIDI mappings cleared.");
                             }
                             else if (result == 3)
                             {
@@ -1258,25 +1348,204 @@ void PreChorusEditor::showOptionsMenu()
                         });
 }
 
-void PreChorusEditor::refreshPresetMenu()
+void PreChorusEditor::loadPresetEntry (const PresetLibrary::Entry& entry)
 {
-    presetCombo.clear (juce::dontSendNotification);
-    auto factory = PreChorusProcessor::getFactoryPresetNames();
-    presetCombo.addSectionHeading ("Factory");
-    for (int i = 0; i < factory.size(); ++i) presetCombo.addItem (factory[i], i + 1);
-
-    userPresetFiles = PreChorusProcessor::getUserPresetFolder().findChildFiles (juce::File::findFiles, false, "*.pcpreset");
-    userPresetFiles.sort();
-    if (userPresetFiles.size() > 700) userPresetFiles.removeRange (700, userPresetFiles.size());
-    if (! userPresetFiles.isEmpty())
+    juce::String err;
+    if (entry.factoryIndex >= 0)
     {
-        presetCombo.addSectionHeading ("User");
-        for (int i = 0; i < userPresetFiles.size(); ++i) presetCombo.addItem (userPresetFiles[i].getFileNameWithoutExtension(), 101 + i);
+        proc.loadFactoryPreset (entry.factoryIndex);
+        currentPresetKey = entry.key;
+        setStatus ("Preset: " + entry.name);
     }
-    presetCombo.addSeparator();
-    presetCombo.addItem ("Save User Preset...", 900);
-    presetCombo.addItem ("Load Preset File...", 901);
-    presetCombo.setSelectedId (lastPresetId, juce::dontSendNotification);
+    else if (proc.loadUserPreset (entry.file, err))
+    {
+        currentPresetKey = entry.key;
+        setStatus ("User preset: " + entry.name);
+    }
+    else setStatus ("Preset load failed: " + err);
+    library->markRecent (entry.key);
+    waveform.rebuild();
+}
+
+void PreChorusEditor::stepPreset (int direction)
+{
+    const auto order = library->filter ("", {}, false, 0);
+    if (order.empty()) return;
+    int pos = -1;
+    for (int i = 0; i < (int) order.size(); ++i)
+        if (library->entries()[(size_t) order[(size_t) i]].key == currentPresetKey) { pos = i; break; }
+    pos = pos < 0 ? (direction > 0 ? 0 : (int) order.size() - 1) : (pos + direction + (int) order.size()) % (int) order.size();
+    loadPresetEntry (library->entries()[(size_t) order[(size_t) pos]]);
+}
+
+void PreChorusEditor::savePresetDialog()
+{
+    auto folder = PreChorusProcessor::getUserPresetFolder();
+    folder.createDirectory();
+    presetChooser = std::make_shared<juce::FileChooser> ("Save PreChorus Preset", folder, "*.pcpreset");
+    presetChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            juce::String err;
+            f = f.withFileExtension ("pcpreset");
+            const bool ok = proc.saveUserPreset (f, err);
+            setStatus (ok ? "Saved preset: " + f.getFileNameWithoutExtension() : "Preset save failed: " + err);
+            library->rescan();
+            if (ok) currentPresetKey = "U:" + f.getRelativePathFrom (library->getFolder()).replaceCharacter ('\\', '/');
+        });
+}
+
+void PreChorusEditor::openPresetBrowser()
+{
+    if (browserBox != nullptr) { browserBox->dismiss(); browserBox = nullptr; return; }
+    library->rescan();
+    PresetBrowser::Callbacks cb;
+    cb.load = [this] (const PresetLibrary::Entry& entry) { loadPresetEntry (entry); };
+    cb.save = [this] { savePresetDialog(); };
+    cb.init = [this] { proc.loadInitPreset(); currentPresetKey.clear(); waveform.rebuild(); setStatus ("Init: all sound-design controls reset to their defaults."); };
+    cb.status = [this] (const juce::String& s) { setStatus (s); };
+    auto content = std::make_unique<PresetBrowser> (*library, cb);
+    content->setLookAndFeel (&lnf);
+    content->setCurrentKey (currentPresetKey);
+    auto area = presetButton.getScreenBounds();
+    browserBox = &juce::CallOutBox::launchAsynchronously (std::move (content), area, nullptr);
+    browserBox->setLookAndFeel (&lnf);
+}
+
+void PreChorusEditor::showThemeMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Randomize theme");
+    const auto themes = PreChorusProcessor::getRandomThemeNames();
+    m.addItem (7, "Classic  (R)");
+    for (int i = 0; i < themes.size(); ++i) m.addItem (1 + i, themes[i]);
+    m.addSeparator();
+    m.addSectionHeader ("Lock groups (kept out of randomize)");
+    const auto groups = PreChorusProcessor::getLockGroupNames();
+    for (int i = 0; i < groups.size(); ++i) m.addItem (20 + i, "Lock: " + groups[i], true, (proc.lockedGroups & (1u << i)) != 0);
+    m.addItem (30, "Unlock all");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&themeButton), [this, themes, groups] (int r)
+    {
+        if (r >= 1 && r <= 6) { proc.randomizeThemed (r - 1); waveform.rebuild(); setStatus ("Randomized: " + themes[r - 1] + " theme (same seed + theme = same sound)."); }
+        else if (r == 7) { proc.randomizePreChorus(); waveform.rebuild(); setStatus ("Sound-design parameters randomized."); }
+        else if (r >= 20 && r < 20 + groups.size())
+        {
+            proc.lockedGroups ^= (1u << (r - 20));
+            setStatus (juce::String ((proc.lockedGroups & (1u << (r - 20))) ? "Locked: " : "Unlocked: ") + groups[r - 20]);
+        }
+        else if (r == 30) { proc.lockedGroups = 0; setStatus ("All groups unlocked."); }
+    });
+}
+
+void PreChorusEditor::showExportMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Format");
+    const auto fmts = PreChorusProcessor::exportFormatNames();
+    for (int i = 0; i < fmts.size(); ++i) m.addItem (10 + i, fmts[i], true, proc.exportSettings.format == i);
+    m.addSectionHeader ("Sample rate");
+    const auto rates = PreChorusProcessor::exportRateNames();
+    for (int i = 0; i < rates.size(); ++i) m.addItem (20 + i, rates[i], true, proc.exportSettings.rate == i);
+    m.addSectionHeader ("Processing");
+    m.addItem (30, "Normalise to -1 dBFS", true, proc.exportSettings.normalise);
+    m.addItem (31, "Trim silent tail", true, proc.exportSettings.trimTail);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportOptionsButton), [this] (int r)
+    {
+        if (r >= 10 && r < 14) proc.exportSettings.format = r - 10;
+        else if (r >= 20 && r < 24) proc.exportSettings.rate = r - 20;
+        else if (r == 30) proc.exportSettings.normalise = ! proc.exportSettings.normalise;
+        else if (r == 31) proc.exportSettings.trimTail = ! proc.exportSettings.trimTail;
+        else return;
+        setStatus ("Export: " + PreChorusProcessor::exportFormatNames()[proc.exportSettings.format] + ", "
+                   + PreChorusProcessor::exportRateNames()[proc.exportSettings.rate]
+                   + (proc.exportSettings.normalise ? ", normalised" : "") + (proc.exportSettings.trimTail ? ", tail trimmed" : "")
+                   + ". DRAG TO DAW uses the same settings.");
+    });
+}
+
+void PreChorusEditor::runExport()
+{
+    const auto ext = PreChorusProcessor::exportExtension (proc.exportSettings);
+    chooser = std::make_unique<juce::FileChooser> ("Export PreChorus Swell", juce::File(), "*." + ext);
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this, ext] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            const auto out = f.withFileExtension (ext);
+            juce::String err;
+            const bool ok = proc.exportAudio (out, &err);
+            setStatus (ok ? "Exported: " + out.getFileName() : "Export failed: " + err);
+        });
+}
+
+void PreChorusEditor::showKnobMenu (Knob& k)
+{
+    juce::PopupMenu m;
+    const int mapped = proc.getMappedMidiSource (k.id);
+    const bool learning = proc.getMidiLearnParam() == k.id;
+    m.addItem (1, learning ? "Cancel MIDI learn" : "MIDI learn...  (then move a CC / mod wheel)");
+    if (mapped >= 0) m.addItem (2, "Clear MIDI mapping (" + PreChorusProcessor::midiSourceName (mapped) + ")");
+    m.addSeparator();
+    m.addItem (3, "Reset to default");
+    auto* kp = &k;
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&k.slider), [this, kp] (int r)
+    {
+        if (r == 1)
+        {
+            if (proc.getMidiLearnParam() == kp->id) { proc.cancelMidiLearn(); setStatus ("MIDI learn cancelled."); }
+            else { proc.startMidiLearn (kp->id); setStatus ("MIDI learn: move a controller for " + kp->baseName + " (Esc cancels). Not every host forwards CC to effects."); }
+        }
+        else if (r == 2) { proc.clearMidiMapping (kp->id); setStatus ("MIDI mapping cleared for " + kp->baseName + "."); }
+        else if (r == 3)
+        {
+            if (auto* p = proc.apvts.getParameter (kp->id)) { proc.beginGesture (kp->id); p->setValueNotifyingHost (p->getDefaultValue()); proc.endGesture (kp->id); }
+        }
+    });
+}
+
+void PreChorusEditor::updateLearnVisuals()
+{
+    const auto learning = proc.getMidiLearnParam();
+    for (auto& k : knobs)
+    {
+        const bool isLearning = k->id == learning;
+        const int src = proc.getMappedMidiSource (k->id);
+        const auto wanted = isLearning ? juce::String ("LEARNING...") : (src >= 0 ? k->baseName + " [" + PreChorusProcessor::midiSourceName (src) + "]" : k->baseName);
+        if (k->label.getText() != wanted)
+        {
+            k->label.setText (wanted, juce::dontSendNotification);
+            k->label.setColour (juce::Label::textColourId, isLearning ? PCColours::hitCol : (src >= 0 ? PCColours::neon : PCColours::textDim));
+        }
+    }
+}
+
+void PreChorusEditor::applyAccessibility()
+{
+    for (auto& k : knobs)
+    {
+        k->slider.setTitle (k->baseName);
+        k->slider.setDescription (k->slider.getTooltip());
+        k->slider.setWantsKeyboardFocus (true);
+        k->label.setInterceptsMouseClicks (false, false);
+        k->label.setAccessible (false);   // the slider already carries the name
+    }
+    struct Named { juce::Component* c; const char* name; };
+    for (auto n : { Named { &sourceModeCombo, "Source mode" }, { &scaleCombo, "Scale lock" }, { &dirCombo, "Voice direction" },
+                    { &postReleaseCombo, "Post-target release" }, { &charCombo, "Voice character" }, { &seqCombo, "Target sequence" },
+                    { &captureCombo, "Capture mode" }, { &syncCombo, "Sync length" }, { &rangeCombo, "Pitch range" },
+                    { &stutterGridCombo, "Stutter grid" }, { &targetCombo, "Target source" }, { &dragPad, "Drag to DAW" } })
+    {
+        n.c->setTitle (n.name);
+        n.c->setWantsKeyboardFocus (true);
+    }
+    for (auto* t : { &freezeToggle, &revConvergeToggle, &alignToggle, &syncToggle, &reducedMotionToggle, &keytrackToggle })
+        t->setWantsKeyboardFocus (true);
+    statusLabel.setTitle ("Status");
+    outputLabel.setTitle ("Output level");
+    confidenceLabel.setTitle ("Target confidence");
 }
 
 void PreChorusEditor::openHelp()
@@ -1354,7 +1623,11 @@ void PreChorusEditor::resized()
     charCombo.setBounds (header.removeFromRight (116).reduced (0, 5));
     header.removeFromRight (6);
 
-    presetCombo.setBounds (header.removeFromRight (150).reduced (0, 5));
+    presetNextButton.setBounds (header.removeFromRight (20).reduced (0, 5));
+    header.removeFromRight (2);
+    presetButton.setBounds (header.removeFromRight (126).reduced (0, 5));
+    header.removeFromRight (2);
+    presetPrevButton.setBounds (header.removeFromRight (20).reduced (0, 5));
     header.removeFromRight (6);
 
     auto browser = header.withTrimmedLeft (12);
@@ -1380,7 +1653,9 @@ void PreChorusEditor::resized()
         capStrip.removeFromLeft (2);
     }
     capStrip.removeFromLeft (4);
-    lockButton.setBounds (capStrip.removeFromLeft (48));
+    lockButton.setBounds (capStrip.removeFromLeft (48));  capStrip.removeFromLeft (8);
+    retakeButton.setBounds (capStrip.removeFromLeft (60)); capStrip.removeFromLeft (8);
+    levelBar.setBounds (capStrip.removeFromLeft (110).reduced (0, 6));
 
     confidenceLabel.setBounds (capStrip.removeFromRight (170));
     capStrip.removeFromRight (6);
@@ -1388,6 +1663,8 @@ void PreChorusEditor::resized()
 
     area.removeFromTop (3);
     auto statusRow = area.removeFromTop (18);
+    swarmViewButton.setBounds (statusRow.removeFromRight (94).reduced (0, 1));
+    statusRow.removeFromRight (6);
     reducedMotionToggle.setBounds (statusRow.removeFromRight (118));
     outputLabel.setBounds (statusRow.removeFromRight (118));
     statusLabel.setBounds (statusRow);
@@ -1398,15 +1675,18 @@ void PreChorusEditor::resized()
     visualizer.setBounds (vis.removeFromLeft (210));
     vis.removeFromLeft (10);
     waveform.setBounds (vis);
+    swarmView.setBounds (vis);
 
     // 4. Transport & Alignment Row
     area.removeFromTop (6);
     auto trans = area.removeFromTop (28);
     playButton.setBounds (trans.removeFromLeft (64));       trans.removeFromLeft (4);
-    exportButton.setBounds (trans.removeFromLeft (84));     trans.removeFromLeft (4);
+    exportButton.setBounds (trans.removeFromLeft (84));     trans.removeFromLeft (1);
+    exportOptionsButton.setBounds (trans.removeFromLeft (20)); trans.removeFromLeft (4);
     dragPad.setBounds (trans.removeFromLeft (100));         trans.removeFromLeft (4);
     resetButton.setBounds (trans.removeFromLeft (80));      trans.removeFromLeft (4);
-    randomButton.setBounds (trans.removeFromLeft (64));     trans.removeFromLeft (4);
+    randomButton.setBounds (trans.removeFromLeft (64));     trans.removeFromLeft (1);
+    themeButton.setBounds (trans.removeFromLeft (20));      trans.removeFromLeft (4);
     regenSeedButton.setBounds (trans.removeFromLeft (56));  trans.removeFromLeft (10);
 
     freezeToggle.setBounds (trans.removeFromLeft (70));     trans.removeFromLeft (4);
@@ -1421,6 +1701,8 @@ void PreChorusEditor::resized()
     // 5. Knob Panels (Rows A & B)
     area.removeFromTop (8);
     const auto knobArea = area;
+    auto rowC = area.removeFromBottom (124);
+    area.removeFromBottom (8);
     const int rowH = (area.getHeight() - 8) / 2;
     auto rowA = area.removeFromTop (rowH);
     area.removeFromTop (8);
@@ -1474,6 +1756,24 @@ void PreChorusEditor::resized()
         layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension, kTrimStart, kTrimEnd });
     }
 
+    // Row C: STUTTER GRID, IMPACT LAYERS, TARGET & MORPH
+    const int wC = rowC.getWidth();
+    {
+        auto g1 = group (rowC, (int) (wC * 0.38f), "BUILD STUTTER GRID");
+        stutterGridCombo.setBounds (g1.removeFromLeft (92).withSizeKeepingCentre (88, 22));
+        g1.removeFromLeft (4);
+        layoutKnobs (g1.removeFromLeft (70), { kStutterSwing });
+        g1.removeFromLeft (8);
+        stepEditor.setBounds (g1.withSizeKeepingCentre (g1.getWidth(), 34));
+    }
+    layoutKnobs (group (rowC, (int) (wC * 0.33f), "IMPACT & RISER LAYERS"), { kLayRiser, kLayRev, kLaySub, kLayImpact, kLayTone });
+    {
+        auto g3 = group (rowC, rowC.getWidth(), "TARGET SOURCE & A/B MORPH");
+        targetCombo.setBounds (g3.removeFromLeft (112).withSizeKeepingCentre (108, 22));
+        g3.removeFromLeft (4);
+        layoutKnobs (g3, { kTgtThresh, kMorph });
+    }
+
     // Simple view: only the main build controls, laid out large. (Pure layout switch: no parameters change.)
     const bool simple = proc.simpleView;
     const std::initializer_list<Knob*> simpleKnobs { kMacro, kVoiceCount, kTail, kPanSpread, kTilt, kSpace, kWet };
@@ -1483,7 +1783,8 @@ void PreChorusEditor::resized()
         k->slider.setVisible (show);
         k->label.setVisible (show);
     }
-    for (auto* c : std::initializer_list<juce::Component*> { &dirCombo, &scaleCombo, &postReleaseCombo, &rangeCombo, &rangeLabel, &pitchTension })
+    for (auto* c : std::initializer_list<juce::Component*> { &dirCombo, &scaleCombo, &postReleaseCombo, &rangeCombo, &rangeLabel, &pitchTension,
+                                                              &stutterGridCombo, &targetCombo, &stepEditor })
         c->setVisible (! simple);
     if (simple)
     {
@@ -1533,6 +1834,7 @@ void PreChorusEditor::setStatus (const juce::String& text)
 {
     statusLabel.setText (text, juce::dontSendNotification);
     proc.logStatus (text);
+    if (auto* h = statusLabel.getAccessibilityHandler()) h->notifyAccessibilityEvent (juce::AccessibilityEvent::textChanged);
 }
 
 bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
@@ -1544,6 +1846,12 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    if (key.getKeyCode() == juce::KeyPress::escapeKey && proc.getMidiLearnParam().isNotEmpty())
+    {
+        proc.cancelMidiLearn();
+        setStatus ("MIDI learn cancelled.");
+        return true;
+    }
     if (key.getKeyCode() == juce::KeyPress::escapeKey && help.isVisible())
     {
         help.setVisible (false);

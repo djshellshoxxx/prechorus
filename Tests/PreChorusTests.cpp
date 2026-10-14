@@ -758,6 +758,22 @@ public:
                     if (fos.openedOk()) { fos.setPosition (0); fos.truncate(); juce::PNGImageFormat().writeImageToStream (img, fos); }
                 }
             }
+            ed.reset();
+            p.simpleView = false;
+            std::unique_ptr<juce::AudioProcessorEditor> full (p.createEditor());
+            expect (full != nullptr);
+            if (full != nullptr)
+            {
+                auto img = full->createComponentSnapshot (full->getLocalBounds());
+                expect (img.isValid());
+                const auto dir = juce::SystemStats::getEnvironmentVariable ("PRECHORUS_SNAPSHOT_DIR", {});
+                if (dir.isNotEmpty() && img.isValid())
+                {
+                    juce::File out = juce::File (dir).getChildFile ("editor_full.png");
+                    juce::FileOutputStream fos (out);
+                    if (fos.openedOk()) { fos.setPosition (0); fos.truncate(); juce::PNGImageFormat().writeImageToStream (img, fos); }
+                }
+            }
         }
 
         beginTest ("simple/full view preference is stored with the project; old projects open in full view");
