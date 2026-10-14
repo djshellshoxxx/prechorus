@@ -260,6 +260,12 @@ juce::Rectangle<float> WaveformDisplay::plot() const
     return getLocalBounds().toFloat().reduced (8.0f);
 }
 
+float WaveformDisplay::envSpanFraction() const
+{
+    // The volume envelope spans the start of the swell to the hit, then holds its end level.
+    return (hitIndex > 0 && total > 0 && hitIndex < total) ? (float) hitIndex / (float) total : 1.0f;
+}
+
 float WaveformDisplay::volY (float level) const
 {
     auto p = plot();
@@ -396,22 +402,24 @@ void WaveformDisplay::paint (juce::Graphics& g)
     const float vt = proc.param (IDs::volTension);
     juce::Path volPath;
     volPath.startNewSubPath (p.getX(), volY (v0));
+    const float span = envSpanFraction();
     for (int i = 1; i <= 64; ++i)
     {
         const float norm = (float) i / 64.0f;
         const float lvl = v0 + (v1 - v0) * tensionCurve (norm, vt);
-        volPath.lineTo (p.getX() + norm * p.getWidth(), volY (lvl));
+        volPath.lineTo (p.getX() + norm * span * p.getWidth(), volY (lvl));
     }
+    if (span < 0.999f) volPath.lineTo (p.getRight(), volY (v1));   // the end level holds after the hit
     g.setColour (juce::Colours::white.withAlpha (0.8f));
     g.strokePath (volPath, juce::PathStrokeType (1.8f));
 
     g.setColour (PCColours::neon);
     g.fillEllipse (p.getX() - 4.0f, volY (v0) - 4.0f, 8.0f, 8.0f);
-    g.fillEllipse (p.getRight() - 4.0f, volY (v1) - 4.0f, 8.0f, 8.0f);
+    g.fillEllipse (p.getX() + span * p.getWidth() - 4.0f, volY (v1) - 4.0f, 8.0f, 8.0f);
 
     const float midLvl = v0 + (v1 - v0) * tensionCurve (0.5f, vt);
     g.setColour (PCColours::accent);
-    g.fillEllipse (p.getCentreX() - 3.5f, volY (midLvl) - 3.5f, 7.0f, 7.0f);
+    g.fillEllipse (p.getX() + 0.5f * span * p.getWidth() - 3.5f, volY (midLvl) - 3.5f, 7.0f, 7.0f);
 
     const int ph = proc.getPlayheadPosition();
     if (ph >= 0 && total > 0 && ph < total)
@@ -444,9 +452,10 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     const float vt = proc.param (IDs::volTension);
     const float midLvl = v0 + (v1 - v0) * tensionCurve (0.5f, vt);
 
+    const float span = envSpanFraction();
     if (e.position.getDistanceFrom ({ p.getX(), volY (v0) }) < 12.0f) drag = Drag::volStart;
-    else if (e.position.getDistanceFrom ({ p.getRight(), volY (v1) }) < 12.0f) drag = Drag::volEnd;
-    else if (e.position.getDistanceFrom ({ p.getCentreX(), volY (midLvl) }) < 12.0f) { drag = Drag::volTension; downA = vt; }
+    else if (e.position.getDistanceFrom ({ p.getX() + span * p.getWidth(), volY (v1) }) < 12.0f) drag = Drag::volEnd;
+    else if (e.position.getDistanceFrom ({ p.getX() + 0.5f * span * p.getWidth(), volY (midLvl) }) < 12.0f) { drag = Drag::volTension; downA = vt; }
     else { drag = Drag::none; proc.triggerPreview(); }
     if (drag != Drag::none) proc.beginGesture (dragParam (drag));
 }

@@ -76,6 +76,16 @@ namespace IDs
     static const juce::String keytrack = "keytrack";           // MIDI note transposes swarm playback (C4 = original)
     static const juce::String stutter = "stutter";             // Build stutter gate accelerating into the hit
 
+    // v0.0.2 additions (all appended; existing IDs/orders never change)
+    static const juce::String stutterGrid = "stutterGrid";     // 0: Straight, 1: Triplet, 2: Dotted, 3: Custom 16-step
+    static const juce::String stutterSwing = "stutterSwing";   // 0..0.6 swing on every second step
+    static const juce::String stutterPattern = "stutterPattern"; // 16-bit step mask for the Custom grid
+    static const juce::String layRiser = "layRiser", layRev = "layRev", laySub = "laySub", layImpact = "layImpact", layTone = "layTone";
+    static const juce::String tgtSource = "tgtSource";         // 0: MIDI note, 1: Next bar line, 2: Loop end, 3: Input transient
+    static const juce::String tgtThresh = "tgtThresh";         // dB, for Input transient
+    static const juce::String morph = "morph";                 // A<->B morph amount
+    static const juce::String scSource = "scSource";           // 0: Main input, 1: Sidechain input
+
     // Envelopes & Trim
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";

@@ -70,6 +70,7 @@ private:
     void timerCallback() override;
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
+    float envSpanFraction() const;
     PreChorusProcessor& proc;
     std::shared_ptr<const RenderedSample> cached;
     juce::Path swellPath, hitPath;

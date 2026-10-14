@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Dsp.h"
 #include "DemoSource.h"
 
 namespace
@@ -76,7 +77,9 @@ namespace
             IDs::resonance, IDs::tilt, IDs::presence, IDs::air, IDs::space, IDs::drive, IDs::transients,
             IDs::formant, IDs::monoBass, IDs::ducking, IDs::dry, IDs::wet, IDs::dryReplace, IDs::syncLen,
             IDs::pitch, IDs::pitchRange, IDs::pitchTension, IDs::volStart, IDs::volEnd, IDs::volTension,
-            IDs::keytrack, IDs::stutter };
+            IDs::keytrack, IDs::stutter,
+            IDs::stutterGrid, IDs::stutterSwing, IDs::stutterPattern,
+            IDs::layRiser, IDs::layRev, IDs::laySub, IDs::layImpact, IDs::layTone };
         return ids;
     }
 
@@ -184,7 +187,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::voiceAge, "Voice Age", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.25f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::progReveal, "Prog Reveal", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.50f));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::voiceDirection, "Direction", juce::StringArray { "Forward", "Reverse", "Alternating", "Random" }, 2));
-    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::character, "Character", juce::StringArray { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir", "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral" }, 1));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::character, "Character", juce::StringArray { "Clean Digital", "Analog Ensemble", "Bucket-Brigade", "Tape Choir", "Dimension", "String Ensemble", "Granular Cloud", "Lo-Fi Choral", "Vowel Choir", "Stadium Crowd", "Glitch Scatter" }, 1));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::humanize, "Humanize", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.25f));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::grainSize, "Grain Size", juce::NormalisableRange<float> (10.0f, 200.0f, 1.0f), 45.0f));
 
@@ -238,6 +241,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout PreChorusProcessor::createLa
     p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::sequence, "Target Sequence", juce::StringArray { "Every Note", "Beat 1 Only", "Every 2 Bars", "Every 4 Bars" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterBool> (IDs::keytrack, "Keytrack", false));
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::stutter, "Build Stutter", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::stutterGrid, "Stutter Grid", juce::StringArray { "Straight", "Triplet", "Dotted", "Custom" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::stutterSwing, "Stutter Swing", juce::NormalisableRange<float> (0.0f, 0.6f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterInt> (IDs::stutterPattern, "Stutter Pattern", 0, 65535, 0x5555));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::layRiser, "Riser Layer", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::layRev, "Reverse Cymbal Layer", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::laySub, "Sub Drop Layer", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::layImpact, "Impact Layer", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::layTone, "Layer Tone", juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (IDs::tgtSource, "Target Source", juce::StringArray { "MIDI Note", "Next Bar Line", "Loop End", "Input Transient" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::tgtThresh, "Transient Threshold", juce::NormalisableRange<float> (-48.0f, 0.0f, 0.5f), -20.0f));
+    p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::morph, "A/B Morph", juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f));
 
     // Envelopes & Trim
     p.push_back (std::make_unique<juce::AudioParameterFloat> (IDs::pitch, "Pitch Sweep", juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), 0.0f));
@@ -749,12 +763,30 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
     juce::AudioBuffer<float> swarmBuffer (2, totalSwarmLen);
     swarmBuffer.clear();
 
-    const int numSlices = 8;
-    const int sliceLen = srcLen / numSlices;
+    // Slice Scatter: split at detected transients (8 equal slices when the source has none)
+    std::vector<int> sliceStarts;
+    if (sMode == 3) sliceStarts = PCDsp::detectSliceStarts (source, sr, 8);
+    const int numSlices = juce::jmax (1, (int) sliceStarts.size());
+    auto sliceStartOf = [&] (int k) { return sliceStarts[(size_t) (k % numSlices)]; };
+    auto sliceLenOf = [&] (int k)
+    {
+        const int idx = k % numSlices;
+        const int end = idx + 1 < numSlices ? sliceStarts[(size_t) idx + 1] : srcLen;
+        return juce::jmax (1, end - sliceStarts[(size_t) idx]);
+    };
     const int grainSamples = (int) (sr * (grainSizeMs * 0.001f));
 
-    // Formant pitch multiplier
-    const double formantRatio = std::pow (2.0, (double) formantShift / 12.0);
+    // Formant shift: moves the spectral envelope without changing pitch, applied to the voices' copy of the source
+    // (the target hit stays natural).
+    juce::AudioBuffer<float> formantSource;
+    const bool formantActive = std::abs (formantShift) > 0.01f;
+    if (formantActive)
+    {
+        formantSource.makeCopyOf (source);
+        PCDsp::formantShift (formantSource, formantShift, sr);
+    }
+    const juce::AudioBuffer<float>& voiceSrc = formantActive ? formantSource : source;
+    const juce::int64 seedParam = (juce::int64) param (IDs::seed);
 
     // Render Voices
     for (int v = 0; v < numVoices; ++v)
@@ -768,7 +800,7 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
         const float densityNorm = tensionCurve (vNorm, densityCurveParam);
         const float rawOffsetSec = (1.0f - densityNorm) * timeSpreadSec + hTime;
         const float offsetSec = juce::jmax (0.01f, rawOffsetSec * (1.0f - timeConvergeAmt * 0.7f));
-        const int voiceStartSample = juce::jlimit (0, swellLen - 1, (int) ((swellSeconds - offsetSec) * sr));
+        int voiceStartSample = juce::jlimit (0, swellLen - 1, (int) ((swellSeconds - offsetSec) * sr));
 
         const float randPitch = (rnd.nextFloat() * 2.0f - 1.0f) * pitchSpreadSemi;
         const float microDetune = (vNorm - 0.5f) * 2.0f * (detuneCents / 100.0f) + hPitch;
@@ -782,8 +814,16 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
         const float revealFrac = juce::jlimit (0.08f, 1.0f, vNorm + (1.0f - progRevealAmt) * 0.92f);
         const int playableSrcLen = juce::jmax (64, (int) (srcLen * revealFrac));
 
-        int srcOffset = 0;
-        if (sMode == 3 && sliceLen > 64) srcOffset = (v % numSlices) * sliceLen;
+        int srcOffset = 0, sliceLen = 1;
+        if (sMode == 3) { srcOffset = sliceStartOf (v); sliceLen = sliceLenOf (v); }
+        juce::Random vr (seedParam * 7919 + (juce::int64) v * 104729);   // per-voice stream for the extra characters
+        float voiceExtraPitch = 0.0f;
+        int voiceStartDelay = 0;
+        if (charMode == 9) { voiceStartDelay = (int) (vr.nextFloat() * 0.04f * (float) sr); voiceExtraPitch = (vr.nextFloat() * 2.0f - 1.0f) * 0.35f; }
+        voiceStartSample = juce::jmin (swellLen - 1, voiceStartSample + voiceStartDelay);
+        PCDsp::SVF vowelFilt[2][3];
+        float glitchLeft = 0.0f, glitchStartRead = 0.0f, crowdLP = 0.0f;
+        int glitchBase = 0; bool glitchRev = false, glitchMute = false; int glitchTotal = 1;
 
         const float initPan = (vNorm * 2.0f - 1.0f) * panSpreadAmt;
         float ageFilterL = 0.0f, ageFilterR = 0.0f;
@@ -854,7 +894,8 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
                 curPitchSemi += initPitchSemi * postFrac * 0.75f;
             }
 
-            const double pitchSpeed = std::pow (2.0, (curPitchSemi + (float) (formantRatio - 1.0) * 4.0f) / 12.0);
+            curPitchSemi += voiceExtraPitch;
+            const double pitchSpeed = std::pow (2.0, (double) curPitchSemi / 12.0);
 
             // Pan & Width trajectory
             float curPan = initPan;
@@ -893,15 +934,43 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
                 grainEnv = 0.5f * (1.0f - std::cos ((float) gPos / (float) grainSamples * juce::MathConstants<float>::twoPi));
             }
 
-            if (sMode == 3) sIdx = srcOffset + (sIdx % juce::jmax (1, sliceLen));
-            else sIdx = sIdx % playableSrcLen;
+            if (sMode == 3)
+            {
+                sIdx = sIdx % sliceLen;
+                if (isRev) sIdx = sliceLen - 1 - sIdx;
+                sIdx += srcOffset;
+            }
+            else
+            {
+                sIdx = sIdx % playableSrcLen;
+                if (isRev) sIdx = (srcOffset + playableSrcLen - 1) - (sIdx % playableSrcLen);
+            }
 
-            if (isRev) sIdx = (srcOffset + playableSrcLen - 1) - (sIdx % playableSrcLen);
+            // Glitch Scatter: scrambled, randomly reversed/muted fragments of the source
+            if (charMode == 10)
+            {
+                if (glitchLeft <= 0.0f)
+                {
+                    glitchTotal = juce::jmax (64, (int) ((0.02f + vr.nextFloat() * 0.10f) * (float) sr));
+                    glitchLeft = (float) glitchTotal;
+                    glitchBase = vr.nextInt (juce::jmax (1, srcLen - 2));
+                    glitchRev = vr.nextFloat() < 0.3f;
+                    glitchMute = vr.nextFloat() < 0.2f;
+                    glitchStartRead = (float) readPos;
+                }
+                const int off = (int) ((float) readPos - glitchStartRead);
+                sIdx = (glitchBase + (glitchRev ? -off : off)) % juce::jmax (1, srcLen - 2);
+                if (sIdx < 0) sIdx += srcLen - 2;
+                const float fadeS = juce::jmax (8.0f, 0.002f * (float) sr);
+                const float posInBlk = (float) glitchTotal - glitchLeft;
+                grainEnv = glitchMute ? 0.0f : juce::jmin (1.0f, juce::jmin (posInBlk, glitchLeft) / fadeS);
+                glitchLeft -= 1.0f;
+            }
             sIdx = juce::jlimit (0, srcLen - 2, sIdx);
 
             const float frac = (float) (readPos - (int) readPos);
-            float sampL = source.getSample (0, sIdx) + (source.getSample (0, sIdx + 1) - source.getSample (0, sIdx)) * frac;
-            float sampR = source.getSample (1, sIdx) + (source.getSample (1, sIdx + 1) - source.getSample (1, sIdx)) * frac;
+            float sampL = voiceSrc.getSample (0, sIdx) + (voiceSrc.getSample (0, sIdx + 1) - voiceSrc.getSample (0, sIdx)) * frac;
+            float sampR = voiceSrc.getSample (1, sIdx) + (voiceSrc.getSample (1, sIdx + 1) - voiceSrc.getSample (1, sIdx)) * frac;
             sampL *= grainEnv;
             sampR *= grainEnv;
 
@@ -930,6 +999,32 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
                 }
                 sampL = bbdFilterL;
                 sampR = bbdFilterR;
+            }
+            else if (charMode == 8) // Vowel Choir: parallel formant filters gliding a-e-i-o-u across the build
+            {
+                static const float vowels[5][3] = { { 730, 1090, 2440 }, { 530, 1840, 2480 }, { 270, 2290, 3010 }, { 570, 840, 2410 }, { 300, 870, 2240 } };
+                const float vp = juce::jlimit (0.0f, 0.999f, std::fmod (effectiveProgress * 0.8f + vNorm * 0.37f, 1.0f)) * 4.0f;
+                const int v0i = (int) vp; const float vf = vp - (float) v0i; const int v1i = juce::jmin (4, v0i + 1);
+                const float k = 1.0f / 7.0f;
+                float outL = 0.0f, outR = 0.0f;
+                const float wts[3] = { 1.0f, 0.7f, 0.45f };
+                for (int f = 0; f < 3; ++f)
+                {
+                    const float hz = vowels[v0i][f] + (vowels[v1i][f] - vowels[v0i][f]) * vf;
+                    const float g = PCDsp::SVF::gFor (hz, sr);
+                    float lp, bp, hp;
+                    vowelFilt[0][f].tick (sampL, g, k, lp, bp, hp); outL += bp * k * wts[f] * 3.0f;
+                    vowelFilt[1][f].tick (sampR, g, k, lp, bp, hp); outR += bp * k * wts[f] * 3.0f;
+                }
+                sampL = sampL * 0.3f + outL;
+                sampR = sampR * 0.3f + outR;
+            }
+            else if (charMode == 9) // Stadium Crowd: diffuse, noisy, detuned, softly rolled off
+            {
+                const float noise = (vr.nextFloat() * 2.0f - 1.0f);
+                crowdLP += 0.35f * (noise - crowdLP);
+                sampL = sampL * 0.85f + crowdLP * std::abs (sampL) * 0.9f;
+                sampR = sampR * 0.85f + crowdLP * std::abs (sampR) * 0.9f;
             }
 
             // Voice Age darkening
@@ -1039,16 +1134,47 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
         float* ptrL = swarmBuffer.getWritePointer (0);
         float* ptrR = swarmBuffer.getWritePointer (1);
         const int startI = (int) (swellLen * startFrac);
+        const int grid = (int) param (IDs::stutterGrid);       // 0 straight, 1 triplet, 2 dotted, 3 custom 16-step
+        const float swing = param (IDs::stutterSwing);
+        const int pattern = (int) param (IDs::stutterPattern);
         for (int i = startI; i < swellLen; ++i)
         {
             const double prog = (double) (i - startI) / juce::jmax (1, swellLen - startI);
-            const double division = prog < 0.5 ? 0.5 : (prog < 0.8 ? 0.25 : 0.125); // beats per step
+            double division = prog < 0.5 ? 0.5 : (prog < 0.8 ? 0.25 : 0.125); // beats per step
+            if (grid == 1) division *= 2.0 / 3.0;            // 1/8T, 1/16T, 1/32T
+            else if (grid == 2) division *= 1.5;             // dotted
+            else if (grid == 3) division = 0.25;             // sixteenth steps, 16 per bar
             const int stepLen = juce::jmax (2 * fade + 2, (int) (division * secPerBeat * sr));
-            const int posInStep = (i - startI) % stepLen;
-            const int openLen = stepLen / 2;
-            float gate = posInStep < openLen ? 1.0f : 0.0f;
-            if (posInStep < fade) gate = (float) posInStep / (float) fade;
-            else if (posInStep >= openLen && posInStep < openLen + fade) gate = 1.0f - (float) (posInStep - openLen) / (float) fade;
+            const int t = i - startI;
+            int stepIdx, posInStep, curLen;
+            if (swing > 0.001f)
+            {
+                // pairs of steps: the first is lengthened, the second shortened (swing)
+                const int pair = t / (2 * stepLen), o = t % (2 * stepLen);
+                const int l1 = (int) ((float) stepLen * (1.0f + swing));
+                if (o < l1) { stepIdx = pair * 2; posInStep = o; curLen = l1; }
+                else { stepIdx = pair * 2 + 1; posInStep = o - l1; curLen = 2 * stepLen - l1; }
+            }
+            else { stepIdx = t / stepLen; posInStep = t % stepLen; curLen = stepLen; }
+            float gate;
+            if (grid == 3)
+            {
+                // custom pattern is anchored to the hit: the last step before the impact is step 16 of the bar
+                const int stepsBack = (swellLen - 1 - i) / stepLen;
+                const int bit = 15 - (stepsBack % 16);
+                const bool on = ((pattern >> bit) & 1) != 0;
+                gate = on ? 1.0f : 0.0f;
+                if (posInStep < fade) gate *= (float) posInStep / (float) fade;
+                else if (posInStep > curLen - fade) gate *= (float) juce::jmax (0, curLen - posInStep) / (float) fade;
+                juce::ignoreUnused (stepIdx);
+            }
+            else
+            {
+                const int openLen = curLen / 2;
+                gate = posInStep < openLen ? 1.0f : 0.0f;
+                if (posInStep < fade) gate = (float) posInStep / (float) fade;
+                else if (posInStep >= openLen && posInStep < openLen + fade) gate = 1.0f - (float) (posInStep - openLen) / (float) fade;
+            }
             const float g = 1.0f - stutterAmt * (1.0f - gate);
             ptrL[i] *= g;
             ptrR[i] *= g;
@@ -1167,18 +1293,25 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
     // 8. Combine: Swell + Climax Hit (or Dry Replacement)
     const float dryReplaceAmt = param (IDs::dryReplace);
     const int hitLen = juce::jmin (srcLen, (int) (sr * 2.0));
-    const int fullLen = totalSwarmLen + hitLen;
+    PCDsp::LayerSettings layers;
+    layers.riser = param (IDs::layRiser); layers.reverse = param (IDs::layRev);
+    layers.sub = param (IDs::laySub); layers.impact = param (IDs::layImpact); layers.tone = param (IDs::layTone);
+    const int fullLen = juce::jmax (totalSwarmLen + hitLen, swellLen + PCDsp::layerTailSamples (layers, sr));
     juce::AudioBuffer<float> full (2, fullLen);
     full.clear();
 
     for (int ch = 0; ch < 2; ++ch)
     {
         full.copyFrom (ch, 0, swarmBuffer, ch, 0, totalSwarmLen);
+        // The target hit is added (not copied) so a Sustain Chorus / Scatter Out tail keeps sounding underneath it.
         if (dryReplaceAmt < 0.99f)
-        {
-            full.copyFrom (ch, swellLen, source, ch, 0, hitLen);
-            full.applyGain (ch, swellLen, hitLen, 1.0f - dryReplaceAmt);
-        }
+            full.addFrom (ch, swellLen, source, ch, 0, hitLen, 1.0f - dryReplaceAmt);
+    }
+    PCDsp::addLayers (full, swellLen, sr, layers, seedParam);
+    {
+        // Keep the combined swarm + hit + layers under full scale so the preview/export never starts clipped.
+        const float mag = full.getMagnitude (0, fullLen);
+        if (mag > 0.99f) full.applyGain (0.98f / mag);
     }
     out->fullLengthSec = fullLen / sr;
     out->beats = beats;
@@ -1233,13 +1366,17 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
     // 11. Volume envelope
     const int n = outBuf.getNumSamples();
     const float v0 = param (IDs::volStart), v1 = param (IDs::volEnd), vt = param (IDs::volTension);
+    const int envSpan = hitOut > 0 ? hitOut : n - 1;
     const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f;
     for (int i = 0; i < n; ++i)
     {
         float g = 1.0f;
         if (! flatVol)
         {
-            const float lvl = v0 + (v1 - v0) * tensionCurve ((float) i / (float) juce::jmax (1, n - 1), vt);
+            // the envelope runs from the start of the swell to the hit and then holds its end level, so the
+            // default 0 -> 1 fade-in builds *into* the hit instead of attenuating it by ~40 dB
+            const float x = (float) i / (float) juce::jmax (1, envSpan);
+            const float lvl = v0 + (v1 - v0) * tensionCurve (x, vt);
             g = lvl * lvl;
             for (int ch = 0; ch < 2; ++ch) outBuf.getWritePointer (ch)[i] *= g;
         }

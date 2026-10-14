@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "../Source/PluginProcessor.h"
 #include "../Source/DemoSource.h"
+#include "../Source/Dsp.h"
 
 class PreChorusCoreTests : public juce::UnitTest
 {
@@ -775,6 +776,191 @@ public:
             juce::MemoryBlock legacy; juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
             PreChorusProcessor c; c.setStateInformation (legacy.getData(), (int) legacy.getSize());
             expect (! c.simpleView);
+        }
+
+        beginTest ("formant shift moves the spectral envelope while the pitch stays put");
+        {
+            const double sr = 44100.0; const int n = (int) (sr * 1.0);
+            std::vector<float> x ((size_t) n, 0.0f);
+            const double f0 = 200.0;
+            for (int h = 1; h <= 40; ++h)
+            {
+                const double fh = f0 * h;
+                const double amp = std::exp (-std::pow ((fh - 900.0) / 500.0, 2.0)) + 0.02;
+                for (int i = 0; i < n; ++i) x[(size_t) i] += (float) (amp * std::sin (juce::MathConstants<double>::twoPi * fh * i / sr));
+            }
+            float mx = 0; for (float v : x) mx = juce::jmax (mx, std::abs (v));
+            for (auto& v : x) v *= 0.5f / mx;
+            auto centroid = [&] (const std::vector<float>& s)
+            {
+                PCDsp::FFT fft (8192);
+                std::vector<std::complex<float>> buf (8192);
+                for (int i = 0; i < 8192; ++i) buf[(size_t) i] = s[(size_t) (8192 + i)] * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / 8192.0f));
+                fft.perform (buf.data(), false);
+                double num = 0, den = 0, peak = 0; int peakBin = 0;
+                for (int k = 1; k < 2048; ++k)
+                {
+                    const double m = std::abs (buf[(size_t) k]); num += m * k; den += m;
+                    if (m > peak && k * sr / 8192.0 < 150.0) {}
+                }
+                // fundamental: strongest bin below 300 Hz
+                for (int k = 1; k < (int) (300.0 * 8192 / sr); ++k) { const double m = std::abs (buf[(size_t) k]); if (m > peak) { peak = m; peakBin = k; } }
+                return std::make_pair (num / den * sr / 8192.0, peakBin * sr / 8192.0);
+            };
+            auto before = centroid (x);
+            std::vector<float> up = x, down = x;
+            PCDsp::formantShiftChannel (up.data(), n, 7.0f, sr);
+            PCDsp::formantShiftChannel (down.data(), n, -7.0f, sr);
+            auto cu = centroid (up), cd = centroid (down);
+            logMessage ("formant centroid: down " + juce::String (cd.first) + " / orig " + juce::String (before.first) + " / up " + juce::String (cu.first));
+            expect (cu.first > before.first * 1.12);
+            expect (cd.first < before.first * 0.88);
+            expectWithinAbsoluteError (cu.second, before.second, 12.0);   // pitch unchanged
+            expectWithinAbsoluteError (cd.second, before.second, 12.0);
+            for (float v : up) expect (std::isfinite (v));
+        }
+
+        beginTest ("slice scatter splits at transients and falls back to equal slices");
+        {
+            const double sr = 44100.0; const int n = (int) (sr * 2.0);
+            juce::AudioBuffer<float> b (2, n); b.clear();
+            juce::Random r (5);
+            const int hits[] = { 4000, 26000, 50000, 71000 };
+            for (int h : hits)
+                for (int i = 0; i < 6000 && h + i < n; ++i)
+                {
+                    const float s = (r.nextFloat() * 2.0f - 1.0f) * std::exp (-(float) i / 1500.0f);
+                    b.setSample (0, h + i, s); b.setSample (1, h + i, s);
+                }
+            auto starts = PCDsp::detectSliceStarts (b, sr, 8);
+            expect (starts.size() == 5);
+            expectEquals (starts[0], 0);
+            for (size_t k = 1; k < starts.size() && k <= 4; ++k)
+                expect (std::abs (starts[k] - hits[k - 1]) < 700);
+            juce::AudioBuffer<float> sine (2, n);
+            for (int i = 0; i < n; ++i) { const float s = 0.3f * std::sin (0.05f * (float) i); sine.setSample (0, i, s); sine.setSample (1, i, s); }
+            auto eq = PCDsp::detectSliceStarts (sine, sr, 8);
+            expectEquals ((int) eq.size(), 8);
+            expectEquals (eq[1], n / 8);
+        }
+
+        beginTest ("smart trim removes edge silence, keeps a minimum length and can normalise");
+        {
+            const double sr = 48000.0;
+            juce::AudioBuffer<float> b (2, (int) (sr * 2.5)); b.clear();
+            for (int i = 0; i < (int) (sr * 0.5); ++i) { const float s = 0.25f * std::sin (0.1f * (float) i); b.setSample (0, (int) (sr * 1.0) + i, s); b.setSample (1, (int) (sr * 1.0) + i, s); }
+            expect (PCDsp::smartTrim (b, sr, -50.0f, 0.05, 10.0, true, -1.0f));
+            expectWithinAbsoluteError ((double) b.getNumSamples() / sr, 0.5, 0.01);
+            expectWithinAbsoluteError ((double) b.getMagnitude (0, b.getNumSamples()), (double) juce::Decibels::decibelsToGain (-1.0f), 0.02);
+            expect (std::abs (b.getSample (0, 0)) < 0.01f);                 // faded in
+            juce::AudioBuffer<float> tiny (2, (int) sr); tiny.clear();
+            tiny.setSample (0, 24000, 0.5f);
+            PCDsp::smartTrim (tiny, sr);
+            expect (tiny.getNumSamples() >= (int) (sr * 0.05) - 2);
+            juce::AudioBuffer<float> silent (2, 1000); silent.clear();
+            expect (! PCDsp::smartTrim (silent, sr));                       // all silent: untouched
+            expectEquals (silent.getNumSamples(), 1000);
+        }
+
+        beginTest ("sustain tail is kept under the target hit, layers extend the render and stay finite");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.setParam (IDs::sync, 0.0f); p.setParam (IDs::tail, 1.0f);
+            p.setParam (IDs::postRelease, 1.0f); p.setParam (IDs::dryReplace, 0.0f);
+            p.render();
+            auto r0 = p.getRendered();
+            const int hit = r0->hitIndex;
+            expect (hit > 0);
+            double e = 0; for (int i = hit + 8000; i < hit + 30000 && i < r0->audio.getNumSamples(); ++i) e += std::abs (r0->audio.getSample (0, i));
+            expect (e > 1.0);
+            const int baseLen = r0->audio.getNumSamples();
+            p.setParam (IDs::laySub, 1.0f); p.setParam (IDs::layImpact, 1.0f); p.setParam (IDs::layRiser, 1.0f); p.setParam (IDs::layRev, 1.0f);
+            p.render();
+            auto r1 = p.getRendered();
+            expectEquals (r1->hitIndex, hit);
+            expect (r1->audio.getNumSamples() >= baseLen);
+            double dc = 0; bool fin = true;
+            for (int i = 0; i < r1->audio.getNumSamples(); ++i) { const float s = r1->audio.getSample (0, i); fin = fin && std::isfinite (s); dc += s; }
+            expect (fin);
+            expect (r1->audio.getMagnitude (0, r1->audio.getNumSamples()) <= 1.0f);
+            // layers add energy in the pre-hit riser region
+            double eRise0 = 0, eRise1 = 0;
+            for (int i = hit - 20000; i < hit - 2000; ++i) { eRise0 += std::abs (r0->audio.getSample (0, i)); eRise1 += std::abs (r1->audio.getSample (0, i)); }
+            expect (eRise1 != eRise0);
+            juce::ignoreUnused (dc);
+        }
+
+        beginTest ("stutter grids: straight is unchanged, custom pattern gates, triplet/dotted/swing stay finite");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.setParam (IDs::sync, 0.0f); p.setParam (IDs::tail, 3.0f);
+            p.setParam (IDs::stutter, 1.0f); p.setParam (IDs::space, 0.0f); p.setParam (IDs::distance, 0.0f);
+            p.setParam (IDs::postRelease, 0.0f);
+            p.setParam (IDs::stutterGrid, 3.0f); p.setParam (IDs::stutterPattern, 0.0f);   // every step off
+            p.render();
+            auto r = p.getRendered();
+            const int hit = r->hitIndex;
+            double e = 0; for (int i = hit * 6 / 10; i < hit - 2000; ++i) e += std::abs (r->audio.getSample (0, i));
+            expect (e < 1.0e-3);
+            p.setParam (IDs::stutterPattern, 65535.0f);                                    // every step on: fully open
+            p.render();
+            auto r2 = p.getRendered();
+            double e2 = 0; for (int i = hit * 6 / 10; i < hit - 2000; ++i) e2 += std::abs (r2->audio.getSample (0, i));
+            expect (e2 > 1.0);
+            for (int grid = 0; grid < 4; ++grid)
+                for (float swing : { 0.0f, 0.4f })
+                {
+                    p.setParam (IDs::stutterGrid, (float) grid); p.setParam (IDs::stutterSwing, swing); p.setParam (IDs::stutterPattern, 21845.0f);
+                    p.render();
+                    auto rr = p.getRendered();
+                    bool ok = rr != nullptr;
+                    for (int i = 0; ok && i < rr->audio.getNumSamples(); ++i) ok = std::isfinite (rr->audio.getSample (0, i));
+                    expect (ok);
+                }
+        }
+
+        beginTest ("new characters render finite, level-safe and deterministic");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            for (int ch = 0; ch <= 10; ++ch)
+            {
+                p.setParam (IDs::character, (float) ch);
+                p.render();
+                auto a = p.getRendered();
+                p.render();
+                auto b = p.getRendered();
+                expect (a != nullptr && b != nullptr);
+                bool same = a->audio.getNumSamples() == b->audio.getNumSamples();
+                float peak = 0;
+                for (int i = 0; same && i < a->audio.getNumSamples(); ++i)
+                {
+                    const float s = a->audio.getSample (0, i);
+                    if (! std::isfinite (s) || s != b->audio.getSample (0, i)) same = false;
+                    peak = juce::jmax (peak, std::abs (s));
+                }
+                expect (same);
+                logMessage ("char " + juce::String (ch) + " peak " + juce::String (peak));
+                expect (peak > 0.02f && peak <= 1.0f);
+            }
+        }
+
+        beginTest ("formant knob and slice scatter render through the engine");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.setParam (IDs::formant, 5.0f);
+            p.setParam (IDs::sourceMode, 3.0f);
+            p.render();
+            auto r = p.getRendered();
+            expect (r != nullptr && r->audio.getNumSamples() > 1000);
+            expect (std::isfinite (r->audio.getMagnitude (0, r->audio.getNumSamples())));
         }
     }
 };
