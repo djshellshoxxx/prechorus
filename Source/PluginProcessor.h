@@ -190,7 +190,8 @@ public:
         bool trimTail = false;   // remove trailing silence (below -70 dBFS)
     };
     ExportSettings exportSettings;
-    bool exportWithSettings (const juce::File& dest, const ExportSettings& s, juce::String* error = nullptr);
+    // stem: 0 = everything, 1 = swarm build-up only, 2 = target hit + tail only (levels applied, silence elsewhere)
+    bool exportWithSettings (const juce::File& dest, const ExportSettings& s, juce::String* error = nullptr, int stem = 0);
     bool exportAudio (const juce::File& dest, juce::String* error = nullptr) { return exportWithSettings (dest, exportSettings, error); }
     static juce::String exportExtension (const ExportSettings& s) { return s.format == 3 ? "flac" : "wav"; }
     static juce::StringArray exportFormatNames() { return { "WAV 16-bit (dither)", "WAV 24-bit", "WAV 32-bit float", "FLAC 24-bit" }; }
@@ -311,7 +312,9 @@ private:
 
     struct Voice { bool active = false; double pos = 0.0; double rate = 1.0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain, double rate, int sampleOffset);
-    void renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry, float wet, float duckGain);
+    struct StemTargets { float* swarm[2] = { nullptr, nullptr }; float* hit[2] = { nullptr, nullptr }; };
+    void renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry, float wet, float duckGain,
+                      const StemTargets* stems = nullptr);
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
@@ -384,6 +387,7 @@ private:
     std::array<Voice, 16> voices;
 
     // Dry-path delay so PDC alignment keeps the dry input in sync with the reported latency
+    juce::AudioBuffer<float> scBuffer;     // copy of the sidechain input (detector)
     juce::AudioBuffer<float> dryDelay;
     int dryDelayWrite = 0;
     std::atomic<int> reportedLatency { 0 };

@@ -1330,6 +1330,80 @@ public:
             expect (! PresetLibrary::isSafeEntryName ("a/../b") && PresetLibrary::isSafeEntryName ("presets/a.pcpreset"));
             dir.deleteRecursively();
         }
+
+        beginTest ("optional sidechain input drives the detectors and stem outputs sum to the main output");
+        {
+            PreChorusProcessor p;
+            juce::AudioProcessor::BusesLayout lay;
+            lay.inputBuses.add (juce::AudioChannelSet::stereo());
+            lay.inputBuses.add (juce::AudioChannelSet::stereo());
+            for (int i = 0; i < 4; ++i) lay.outputBuses.add (juce::AudioChannelSet::stereo());
+            expect (p.isBusesLayoutSupported (lay));
+            expect (p.setBusesLayout (lay));
+            const int bs = 512;
+            p.prepareToPlay (44100.0, bs);
+            p.asyncRender = false;
+            p.setParam (IDs::sync, 0.0f); p.setParam (IDs::tail, 0.4f);
+            p.render();
+            expectEquals (p.getTotalNumInputChannels(), 4);
+            expectEquals (p.getTotalNumOutputChannels(), 8);
+
+            // threshold capture reacts to the sidechain only when the detector source is Sidechain
+            p.setParam (IDs::captureMode, 0.0f); p.setParam (IDs::thresh, -30.0f);
+            p.armCapture();
+            auto block = [&] (float mainAmp, float scAmp, juce::MidiBuffer m = {})
+            {
+                juce::AudioBuffer<float> b (8, bs); b.clear();
+                for (int i = 0; i < bs; ++i)
+                {
+                    const float s = std::sin (0.05f * (float) i);
+                    for (int c = 0; c < 2; ++c) b.setSample (c, i, mainAmp * s);          // main input
+                    for (int c = 2; c < 4; ++c) b.setSample (c, i, scAmp * s);            // sidechain input
+                }
+                p.processBlock (b, m);
+                return b;
+            };
+            p.setParam (IDs::scSource, 0.0f);
+            block (0.0f, 0.8f); block (0.0f, 0.8f);
+            expect (! p.isCapturing());                          // main input is silent: detector ignores the sidechain
+            p.setParam (IDs::scSource, 1.0f);
+            block (0.0f, 0.8f); block (0.0f, 0.8f);
+            expect (p.isCapturing());                            // sidechain loud: capture starts
+            p.stopCapture(); block (0.0f, 0.0f); block (0.0f, 0.0f);
+            for (int i = 0; i < 600; ++i) { block (0.0f, 0.0f); if (p.getCaptureState() == PreChorusProcessor::CaptureState::idle) break; }
+            p.setParam (IDs::scSource, 0.0f);
+
+            // stems: Swarm + Hit + Dry == main output, and Swarm/Hit actually carry audio
+            p.setParam (IDs::wet, 1.0f); p.setParam (IDs::dry, 1.0f);
+            double maxErr = 0.0, eSwarm = 0.0, eHit = 0.0, eDry = 0.0;
+            for (int blk = 0; blk < 120; ++blk)
+            {
+                juce::MidiBuffer m;
+                if (blk == 0) m.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 4);
+                auto b = block (0.25f, 0.0f, m);
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < bs; ++i)
+                    {
+                        const float mainV = b.getSample (c, i);
+                        const float swarmV = b.getSample (2 + c, i), hitV = b.getSample (4 + c, i), dryV = b.getSample (6 + c, i);
+                        maxErr = juce::jmax (maxErr, (double) std::abs (mainV - (swarmV + hitV + dryV)));
+                        eSwarm += std::abs (swarmV); eHit += std::abs (hitV); eDry += std::abs (dryV);
+                    }
+            }
+            expect (maxErr < 1.0e-5);
+            expect (eSwarm > 1.0 && eHit > 1.0 && eDry > 1.0);
+
+            // back to the default layout: stems and sidechain disabled, processing unchanged
+            juce::AudioProcessor::BusesLayout plain;
+            plain.inputBuses.add (juce::AudioChannelSet::stereo()); plain.inputBuses.add (juce::AudioChannelSet::disabled());
+            plain.outputBuses.add (juce::AudioChannelSet::stereo());
+            for (int i = 0; i < 3; ++i) plain.outputBuses.add (juce::AudioChannelSet::disabled());
+            expect (p.setBusesLayout (plain));
+            p.prepareToPlay (44100.0, bs);
+            juce::AudioBuffer<float> b2 (2, bs); b2.clear(); juce::MidiBuffer m2;
+            p.processBlock (b2, m2);
+            expect (std::isfinite (b2.getMagnitude (0, bs)));
+        }
     }
 };
 

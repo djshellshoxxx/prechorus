@@ -206,8 +206,8 @@ private:
 
     // Live Capture UI & History
     juce::TextButton captureButton { "LIVE CAPTURE" }, armButton { "ARM" }, lockButton { "LOCK" };
-    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo, stutterGridCombo, targetCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt, stutterGridAtt, targetAtt;
+    juce::ComboBox captureCombo, sourceModeCombo, scaleCombo, dirCombo, postReleaseCombo, charCombo, seqCombo, stutterGridCombo, targetCombo, detectorCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt, stutterGridAtt, targetAtt, detectorAtt;
     juce::TextButton presetButton { "PRESETS" }, presetPrevButton { "<" }, presetNextButton { ">" },
                      exportOptionsButton { "v" }, themeButton { "v" }, retakeButton { "RETAKE" }, swarmViewButton { "SWARM VIEW" };
     bool showSwarm = false;

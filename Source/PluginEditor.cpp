@@ -578,49 +578,62 @@ HelpOverlay::HelpOverlay()
     body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     body.setFont (juce::Font (juce::FontOptions (11.5f)));
     body.setText (
-        "PRECHORUS v" PRECHORUS_VERSION_STRING " BETA - 32-Voice Swarm & Convergence Engine by Circuit Drift Labs\n"
+        "PRECHORUS v" PRECHORUS_VERSION_STRING " - 32-Voice Swarm & Convergence Engine by Circuit Drift Labs\n"
         "Formats: VST3, CLAP, Standalone (Windows x64); AU on macOS builds. No network access, telemetry or licence checks.\n\n"
         "The Signature Sound: a cloud of related voices becoming progressively more recognizable "
         "and coherent until they meet the original drop or event.\n\n"
         "QUICK WORKFLOW:\n"
-        "1. LOAD (or drag a file onto the window) or capture a source.  2. Pick a preset or character.\n"
-        "3. Shape swarm/convergence.  4. Press Space/PLAY or send MIDI notes to audition.\n"
-        "5. EXPORT WAV or drag the DRAG TO DAW pad onto a DAW track.\n\n"
+        "1. LOAD (or drag a file onto the window), capture live input, or pick OPTIONS > Load demo source.\n"
+        "2. Pick a preset (PRESETS) or a character.  3. Shape the swarm and convergence (FULL VIEW shows every control).\n"
+        "4. Press Space/PLAY, or send MIDI notes, to audition.  5. EXPORT or drag the DRAG TO DAW pad onto a track.\n\n"
         "SOURCE MODES:\n"
         "- Live Capture: uses the active capture history slot (ARM / LIVE CAPTURE record from the plug-in input).\n"
-        "- Loaded Sample: uses the loaded WAV/AIFF/FLAC/MP3/OGG file (first 12 s). Loading a file while in Live Capture switches here.\n"
+        "- Loaded Sample: uses the loaded WAV/AIFF/FLAC/MP3/OGG file (length limit: OPTIONS > Max source length).\n"
         "- Hybrid Layer: mixes the loaded file and the active capture slot at equal level.\n"
-        "- Slice Scatter: splits the loaded file into 8 slices and spreads them across the voices.\n"
-        "Capture: 8 history slots (1-8). LOCK protects the active take; new takes go to the next free slot.\n"
-        "A finished capture switches Loaded Sample back to Live Capture so the new take is audible.\n\n"
+        "- Slice Scatter: splits the loaded file at its transients (8 equal slices if it has none) and spreads them across the voices.\n"
+        "Capture: 8 history slots (1-8). LOCK protects the active take; new takes go to the next free slot. Smart trim removes silence "
+        "around each take (OPTIONS); RETAKE records the last take again. The meter next to LOCK shows the input level and the red capture threshold.\n\n"
         "KEYBOARD SHORTCUTS:\n"
-        "- Space: preview the current swarm.   - Esc: stop preview (or close this help).\n"
+        "- Space: preview.   - Esc: stop preview, cancel MIDI learn, or close this help.\n"
         "- Ctrl/Cmd+Z: undo.   - Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo (sound-design edits only).\n"
-        "- R: randomize sound-design parameters.   - G: regenerate the deterministic swarm seed.\n"
-        "- H / F1: open this help panel.   - B: switch A/B comparison slot.\n\n"
-        "PRESETS: The preset menu holds 10 factory presets (Pop Vocal Double, EDM Riser Swarm, Future Bass "
-        "Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic Choir Pad, Lo-Fi Bedroom Vocal, "
-        "Ambient Drone Freeze, Aggressive Distortion Drop, Trap Vocal Stutter), your saved user presets, and "
-        "Save/Load entries. Presets only change sound-design controls, never your audio or capture history. "
+        "- R: randomize.   - G: new swarm seed.   - B: switch A/B slot.   - H / F1: this help.\n"
+        "- Tab moves between controls; with a knob focused use Up/Down (Shift = fine), PageUp/PageDown, Home/End.\n\n"
+        "PRESETS: the browser has 24 factory presets with tags (Vocal, EDM, Dubstep, Pop, FX, Subtle, Extreme), search, favorites (star), "
+        "sort by name or recent, INIT, user presets (right-click to rename or delete) and shareable .pcbank banks (IMPORT / EXPORT BANK). "
+        "The < > buttons step through the list. Presets only change sound-design controls, never your audio or capture history. "
         "User presets live in Documents/Circuit Drift Labs/PreChorus/Presets (.pcpreset, versioned XML).\n\n"
-        "A/B COMPARE: the A/B button swaps between two sound-design snapshots; COPY copies the current one to the other slot.\n\n"
-        "KEYTRACK: when on, MIDI notes transpose the swarm (C4 = original pitch) so you can play it like an instrument. "
-        "Transposed notes also stretch/shrink time, so the hit lands earlier/later than the PDC-aligned note.\n\n"
-        "BUILD STUTTER: a gate in the second half of the swell that accelerates from 1/8 to 1/16 to 1/32 notes "
-        "(at host tempo) into the hit - the classic pre-chorus build.\n\n"
+        "RANDOMIZE: R or RANDOM is the classic randomize. The small button beside it picks a theme (Subtle, Wide, Dark, Wild, Tight, Cinematic; the same "
+        "seed and theme always give the same sound) and lets you LOCK groups (Swarm, Convergence, Physics, Tone, Mix & Stutter, Character & Layers) "
+        "so randomize leaves them alone.\n\n"
+        "A/B COMPARE: the A/B button swaps between two sound-design snapshots; COPY copies the current one to the other slot. "
+        "A/B MORPH blends between them (store A, press A>B, edit B, then move the knob; it re-renders when you stop moving).\n\n"
+        "KEYTRACK: when on, MIDI notes transpose the swarm (C4 = original pitch). With Hit on note (PDC) the impact stays on the note for every pitch.\n\n"
+        "TARGET SOURCE: MIDI Note (default), Next Bar Line (starts the swarm early so the impact lands on every bar line, "
+        "obeying the Sequence setting), Loop End (impact on the host loop end) or Input Transient (starts when the input passes TRANSIENT). "
+        "The automatic modes need the host to be playing and do not use PDC latency. DETECT chooses whether Ducking, Threshold capture and "
+        "Input Transient listen to the main input or the sidechain bus (enable the sidechain in your DAW's routing).\n\n"
+        "BUILD STUTTER: a rhythmic gate over the second half of the swell, accelerating 1/8 > 1/16 > 1/32 into the hit. The grid can be Straight, "
+        "Triplet, Dotted or Custom (click the 16 steps; the right-most step is the one before the hit); SWING delays every second step.\n\n"
+        "LAYERS: RISER (noise sweep into the hit), REV CYMBAL (reverse swell ending on the hit), SUB DROP (62 > 30 Hz on the hit) and IMPACT "
+        "are synthesised into the render; LAYER TONE sets their brightness.\n\n"
         "CHARACTER MODES:\n"
         "- Clean Digital: transparent linear interpolation.  - Analog Ensemble: warm saturation and slow pitch drift.\n"
         "- Bucket-Brigade: dark clock roll-off and clock noise.  - Tape Choir: wow & flutter with tape saturation.\n"
-        "- Dimension: wide cross-coupled chorus keeping a solid mono centre.  - String Ensemble: Solina-style dual LFO.\n"
-        "- Granular Cloud: Hann-windowed micro-grains (GRAIN MS).  - Lo-Fi Choral: 4-bit style crush + ~11 kHz sample-rate reduction.\n\n"
-        "EXPORT & DRAG-TO-DAW: EXPORT WAV and DRAG TO DAW write the exact rendered preview as stereo 24-bit PCM "
-        "WAV at the current sample rate, with the SWARM WET / HIT DRY levels applied (no normalization or limiting). "
-        "Dragging uses a temporary file named PreChorus_Swarm.wav.\n\n"
-        "HIT ON NOTE (PDC): reports the swell length as latency (max 20 s) and delays the dry input to match, "
-        "so the target hit lands exactly on the MIDI note.\n\n"
-        "TRIM IN / OUT crop the rendered result. Drag the white volume curve points on the waveform to shape the "
-        "volume envelope; click elsewhere on the waveform to preview. Double-click any knob to reset it.\n"
-        "Options: tooltips on/off, reduced motion, and the window can be resized from the bottom-right corner.\n"
+        "- Dimension: wide cross-coupled chorus with a solid mono centre.  - String Ensemble: Solina-style dual LFO.\n"
+        "- Granular Cloud: Hann-windowed micro-grains (GRAIN MS).  - Lo-Fi Choral: 4-bit crush + ~11 kHz sample-rate reduction.\n"
+        "- Vowel Choir: formant filters gliding a-e-i-o-u.  - Stadium Crowd: diffuse, noisy, detuned voices.  - Glitch Scatter: scrambled, reversed and muted fragments.\n"
+        "FORMANT shifts the vocal timbre of the swarm without changing its pitch.\n\n"
+        "MIDI LEARN: right-click a knob > MIDI learn, then move a CC, the mod wheel, aftertouch or pitch bend. Mappings are saved with the project. "
+        "Sound controls re-render the swarm, so mapped changes are applied a few times per second; not every host forwards CC to effects.\n\n"
+        "EXPORT & DRAG-TO-DAW: EXPORT writes the rendered preview with SWARM WET / HIT DRY levels applied. The small button beside EXPORT sets the "
+        "format (WAV 16-bit with dither, 24-bit, 32-bit float, FLAC 24-bit), sample rate, normalise and tail trimming, and exports stems (Swarm and Hit). "
+        "DRAG TO DAW uses the same settings.\n\n"
+        "STEMS & SIDECHAIN IN THE HOST: PreChorus offers optional extra outputs (Swarm, Hit, Dry) and a sidechain input. Enable them in your DAW's routing; "
+        "the main output is always Swarm + Hit + Dry.\n\n"
+        "HIT ON NOTE (PDC): reports the swell length as latency (max 20 s) and delays the dry input to match, so the target hit lands exactly on the MIDI note.\n\n"
+        "SWARM VIEW: shows every voice of the current render (rows ordered by pan, colour = pitch offset) with the convergence curve and the playhead.\n\n"
+        "TRIM IN / OUT crop the rendered result. The white volume curve runs from the start of the swell to the hit (and holds its end level after it); "
+        "drag its points on the waveform. Double-click any knob to reset it. Options: tooltips, reduced motion, high contrast, window size.\n"
     );
     addAndMakeVisible (body);
     addAndMakeVisible (closeButton);
@@ -824,6 +837,9 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     targetCombo.addItemList (juce::StringArray { "MIDI Note", "Next Bar Line", "Loop End", "Input Transient" }, 1);
     addAndMakeVisible (targetCombo);
     targetAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::tgtSource, targetCombo);
+    detectorCombo.addItemList (juce::StringArray { "Detect: Main In", "Detect: Sidechain" }, 1);
+    addAndMakeVisible (detectorCombo);
+    detectorAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::scSource, detectorCombo);
 
     library = std::make_unique<PresetLibrary> (PreChorusProcessor::getUserPresetFolder(),
                                                PreChorusProcessor::getUserPresetFolder().getParentDirectory().getChildFile ("settings.xml"));
@@ -1057,6 +1073,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     retakeButton.setTooltip ("Record the last capture again into the same slot.");
     swarmViewButton.setTooltip ("Switch between the rendered waveform and the per-voice swarm timeline.");
     stutterGridCombo.setTooltip ("Build stutter rhythm: straight, triplet, dotted, or your own 16-step pattern.");
+    detectorCombo.setTooltip ("Which input drives Ducking, Threshold capture and Input Transient triggering. Sidechain needs the host's sidechain routing to be enabled for this plug-in.");
     targetCombo.setTooltip ("What triggers the swarm: MIDI notes, the next bar line, the loop end, or an input transient. The automatic modes need the host to be playing.");
     levelBar.setTooltip ("Live input level. The red line is the capture threshold.");
     stepEditor.setTooltip ("16-step stutter pattern for the Custom grid. The right-most step is the one just before the hit.");
@@ -1451,12 +1468,31 @@ void PreChorusEditor::showExportMenu()
     m.addSectionHeader ("Processing");
     m.addItem (30, "Normalise to -1 dBFS", true, proc.exportSettings.normalise);
     m.addItem (31, "Trim silent tail", true, proc.exportSettings.trimTail);
+    m.addSeparator();
+    m.addItem (40, "Export stems (Swarm + Hit)...");
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportOptionsButton), [this] (int r)
     {
         if (r >= 10 && r < 14) proc.exportSettings.format = r - 10;
         else if (r >= 20 && r < 24) proc.exportSettings.rate = r - 20;
         else if (r == 30) proc.exportSettings.normalise = ! proc.exportSettings.normalise;
         else if (r == 31) proc.exportSettings.trimTail = ! proc.exportSettings.trimTail;
+        else if (r == 40)
+        {
+            const auto ext = PreChorusProcessor::exportExtension (proc.exportSettings);
+            chooser = std::make_unique<juce::FileChooser> ("Export stems (base name)", juce::File(), "*." + ext);
+            chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                [this, ext] (const juce::FileChooser& fc)
+                {
+                    auto f = fc.getResult();
+                    if (f == juce::File()) return;
+                    const auto base = f.getFileNameWithoutExtension();
+                    juce::String err;
+                    const bool ok1 = proc.exportWithSettings (f.getSiblingFile (base + "_Swarm." + ext), proc.exportSettings, &err, 1);
+                    const bool ok2 = ok1 && proc.exportWithSettings (f.getSiblingFile (base + "_Hit." + ext), proc.exportSettings, &err, 2);
+                    setStatus (ok2 ? "Exported stems: " + base + "_Swarm and " + base + "_Hit." : "Stem export failed: " + err);
+                });
+            return;
+        }
         else return;
         setStatus ("Export: " + PreChorusProcessor::exportFormatNames()[proc.exportSettings.format] + ", "
                    + PreChorusProcessor::exportRateNames()[proc.exportSettings.rate]
@@ -1536,7 +1572,7 @@ void PreChorusEditor::applyAccessibility()
     for (auto n : { Named { &sourceModeCombo, "Source mode" }, { &scaleCombo, "Scale lock" }, { &dirCombo, "Voice direction" },
                     { &postReleaseCombo, "Post-target release" }, { &charCombo, "Voice character" }, { &seqCombo, "Target sequence" },
                     { &captureCombo, "Capture mode" }, { &syncCombo, "Sync length" }, { &rangeCombo, "Pitch range" },
-                    { &stutterGridCombo, "Stutter grid" }, { &targetCombo, "Target source" }, { &dragPad, "Drag to DAW" } })
+                    { &stutterGridCombo, "Stutter grid" }, { &targetCombo, "Target source" }, { &detectorCombo, "Detector source" }, { &dragPad, "Drag to DAW" } })
     {
         n.c->setTitle (n.name);
         n.c->setWantsKeyboardFocus (true);
@@ -1769,7 +1805,9 @@ void PreChorusEditor::resized()
     layoutKnobs (group (rowC, (int) (wC * 0.33f), "IMPACT & RISER LAYERS"), { kLayRiser, kLayRev, kLaySub, kLayImpact, kLayTone });
     {
         auto g3 = group (rowC, rowC.getWidth(), "TARGET SOURCE & A/B MORPH");
-        targetCombo.setBounds (g3.removeFromLeft (112).withSizeKeepingCentre (108, 22));
+        auto combos = g3.removeFromLeft (112);
+        targetCombo.setBounds (combos.removeFromTop (combos.getHeight() / 2).withSizeKeepingCentre (108, 22));
+        detectorCombo.setBounds (combos.withSizeKeepingCentre (108, 22));
         g3.removeFromLeft (4);
         layoutKnobs (g3, { kTgtThresh, kMorph });
     }
@@ -1784,7 +1822,7 @@ void PreChorusEditor::resized()
         k->label.setVisible (show);
     }
     for (auto* c : std::initializer_list<juce::Component*> { &dirCombo, &scaleCombo, &postReleaseCombo, &rangeCombo, &rangeLabel, &pitchTension,
-                                                              &stutterGridCombo, &targetCombo, &stepEditor })
+                                                              &stutterGridCombo, &targetCombo, &detectorCombo, &stepEditor })
         c->setVisible (! simple);
     if (simple)
     {

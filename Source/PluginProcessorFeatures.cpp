@@ -282,7 +282,7 @@ void PreChorusProcessor::applyMidiMappings()
 
 // ---------------- Export ----------------
 
-bool PreChorusProcessor::exportWithSettings (const juce::File& dest, const ExportSettings& s, juce::String* error)
+bool PreChorusProcessor::exportWithSettings (const juce::File& dest, const ExportSettings& s, juce::String* error, int stem)
 {
     auto fail = [&] (const juce::String& why) { if (error != nullptr) *error = why; return false; };
     if (dirty.exchange (false) || renderRequested.load() || renderInFlight.load()) render();   // never export a stale render
@@ -297,6 +297,8 @@ bool PreChorusProcessor::exportWithSettings (const juce::File& dest, const Expor
     {
         mix.applyGain (ch, 0, hitAt, wetParam->load());
         mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
+        if (stem == 1 && hitAt < n) mix.clear (ch, hitAt, n - hitAt);
+        if (stem == 2 && hitAt > 0) mix.clear (ch, 0, hitAt);
     }
 
     if (s.trimTail)
