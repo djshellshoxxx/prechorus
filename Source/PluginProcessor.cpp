@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DemoSource.h"
 
 namespace
 {
@@ -80,7 +81,51 @@ namespace
     }
 
     constexpr int kMaxLatencySeconds = 20;
+
+    // Built-in startup source (C major add-octave chord, 1.5 s) so a fresh instance makes sound immediately.
+    juce::AudioBuffer<float> makeStartupChord (double sr)
+    {
+        juce::AudioBuffer<float> b (2, (int) (sr * 1.5));
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const double t = (double) i / sr;
+            const float env = (float) (std::exp (-t * 3.2));
+            const float s1 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 261.63 * t)); // C4
+            const float s2 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 329.63 * t)); // E4
+            const float s3 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 392.00 * t)); // G4
+            const float s4 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 523.25 * t)); // C5
+            const float val = (s1 * 0.4f + s2 * 0.3f + s3 * 0.3f + s4 * 0.2f) * env * 0.75f;
+            b.setSample (0, i, val);
+            b.setSample (1, i, val);
+        }
+        return b;
+    }
 }
+
+class PreChorusProcessor::RenderWorker : public juce::Thread
+{
+public:
+    explicit RenderWorker (PreChorusProcessor& o) : juce::Thread ("PreChorus render"), owner (o) {}
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            if (! owner.renderRequested.exchange (false)) { wait (-1); continue; }
+            owner.renderInFlight.store (true);
+            const int gen = owner.renderRequestCount.load();
+            auto out = owner.buildRender();
+            if (out != nullptr && ! threadShouldExit())
+            {
+                juce::SpinLock::ScopedLockType l (owner.pendingLock);
+                owner.pendingRender = std::move (out);
+                owner.pendingGen = gen;
+            }
+            owner.renderInFlight.store (false);
+        }
+    }
+private:
+    PreChorusProcessor& owner;
+};
 
 PreChorusProcessor::PreChorusProcessor()
     : AudioProcessor (BusesProperties()
@@ -96,25 +141,15 @@ PreChorusProcessor::PreChorusProcessor()
     wetParam = apvts.getRawParameterValue (IDs::wet);
 
     loadedSR = 44100.0;
-    loadedBuffer.setSize (2, (int) (loadedSR * 1.5));
-    loadedBuffer.clear();
-    for (int i = 0; i < loadedBuffer.getNumSamples(); ++i)
-    {
-        const double t = (double) i / loadedSR;
-        const float env = (float) (std::exp (-t * 3.2));
-        const float s1 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 261.63 * t)); // C4
-        const float s2 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 329.63 * t)); // E4
-        const float s3 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 392.00 * t)); // G4
-        const float s4 = std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 523.25 * t)); // C5
-        const float val = (s1 * 0.4f + s2 * 0.3f + s3 * 0.3f + s4 * 0.2f) * env * 0.75f;
-        loadedBuffer.setSample (0, i, val);
-        loadedBuffer.setSample (1, i, val);
-    }
+    loadedBuffer = makeStartupChord (loadedSR);
 
     captureSlots[0].makeCopyOf (loadedBuffer);
     captureSlotSRs[0] = loadedSR;
     captureSlotFilled[0] = true;
 
+    undoBaseline = soundDesignSnapshot();
+    renderWorker = std::make_unique<RenderWorker> (*this);
+    renderWorker->startThread (juce::Thread::Priority::low);
     startTimerHz (30);
     dirty = true;
 }
@@ -122,6 +157,12 @@ PreChorusProcessor::PreChorusProcessor()
 PreChorusProcessor::~PreChorusProcessor()
 {
     stopTimer();
+    if (renderWorker != nullptr)
+    {
+        renderWorker->signalThreadShouldExit();
+        renderWorker->notify();
+        renderWorker->stopThread (10000);
+    }
     for (auto* p : getParameters())
         apvts.removeParameterListener (static_cast<juce::AudioProcessorParameterWithID*> (p)->paramID, this);
 }
@@ -222,8 +263,9 @@ bool PreChorusProcessor::isBusesLayoutSupported (const BusesLayout& layouts) con
 void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     hostSampleRate = sampleRate;
+    hostBlockSize = samplesPerBlock;
 
-    const int maxCaptureSamples = (int) (sampleRate * 12.0);
+    const int maxCaptureSamples = (int) (sampleRate * (double) maxSourceSec.load());
     captureRingBuffer.setSize (2, maxCaptureSamples);
     captureRingBuffer.clear();
     captureWritePos = 0;
@@ -254,6 +296,7 @@ void PreChorusProcessor::parameterChanged (const juce::String& id, float value)
         activeSlot.store (juce::jlimit (0, kNumHistorySlots - 1, juce::roundToInt (value)));
     else if (id == IDs::captureLock)
         captureLockState.store (value > 0.5f);
+    if (soundDesignIds().contains (id)) undoChangeFlag.store (true);   // no allocation: may run on the audio thread
     dirty = true;
 }
 
@@ -478,13 +521,37 @@ void PreChorusProcessor::timerCallback()
         }
     }
     commitFinishedCapture();
+    updateUndoTracking();
     // Drop retired renders only once the audio thread no longer holds them.
     retiredRendered.erase (std::remove_if (retiredRendered.begin(), retiredRendered.end(),
                                            [] (const auto& r) { return r.use_count() == 1; }), retiredRendered.end());
+
+    // Pick up a finished background render.
+    std::shared_ptr<RenderedSample> got;
+    int gotGen = 0;
+    {
+        juce::SpinLock::ScopedLockType l (pendingLock);
+        got = std::move (pendingRender);
+        gotGen = pendingGen;
+    }
+    if (got != nullptr && gotGen >= ignoreBelowGen)
+    {
+        publishRender (std::move (got));
+        if (previewGenWanted > 0 && gotGen >= previewGenWanted) { previewGenWanted = 0; triggerPreview(); }
+    }
+
     if (dirty.exchange (false))
     {
-        render();
-        if (previewAfterRender.exchange (false)) triggerPreview();
+        if (previewAfterRender.exchange (false)) previewGenWanted = renderRequestCount.load() + 1;
+        if (asyncRender && renderWorker != nullptr)
+        {
+            requestAsyncRender();
+        }
+        else
+        {
+            render();
+            if (previewGenWanted > 0) { previewGenWanted = 0; triggerPreview(); }
+        }
     }
 }
 
@@ -547,6 +614,8 @@ void PreChorusProcessor::commitFinishedCapture()
             captureSlots[(size_t) slot] = std::move (newBuf);
             captureSlotSRs[(size_t) slot] = hostSampleRate;
             captureSlotFilled[(size_t) slot] = true;
+            slotEmbedCache[(size_t) slot].valid = false;
+            if (slot == 0) slot0IsDefaultDemo = false;
             activeSlot.store (slot);
         }
         setParam (IDs::captureSlot, (float) slot);
@@ -558,7 +627,7 @@ void PreChorusProcessor::commitFinishedCapture()
 
 // ---------------- Swarm, Shaping & Spatial Render Engine ----------------
 
-void PreChorusProcessor::render()
+std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
 {
     auto out = std::make_shared<RenderedSample>();
     const double sr = hostSampleRate > 1000.0 ? hostSampleRate : 44100.0;
@@ -618,11 +687,11 @@ void PreChorusProcessor::render()
         }
     }
 
-    if (source.getNumSamples() == 0) return;
+    if (source.getNumSamples() == 0) return nullptr;
     resampleTo (source, rawSR, sr);
 
     const int srcLen = source.getNumSamples();
-    if (srcLen < 128) return;
+    if (srcLen < 128) return nullptr;
 
     // 2. Swell Duration
     int beats = 0;
@@ -690,6 +759,7 @@ void PreChorusProcessor::render()
     // Render Voices
     for (int v = 0; v < numVoices; ++v)
     {
+        if (juce::Thread::currentThreadShouldExit()) return nullptr;     // shutting down the background worker
         const float vNorm = (numVoices > 1) ? (float) v / (float) (numVoices - 1) : 0.5f;
 
         const float hTime = (rnd.nextFloat() * 2.0f - 1.0f) * humanizeAmt * 0.015f;
@@ -1178,7 +1248,13 @@ void PreChorusProcessor::render()
 
     out->audio = std::move (outBuf);
     out->hitIndex = hitOut;
+    return out;
+}
 
+void PreChorusProcessor::publishRender (std::shared_ptr<RenderedSample> out)
+{
+    if (out == nullptr) return;
+    const double sr = out->sampleRate;
     const int maxLatency = (int) (sr * kMaxLatencySeconds);
     const int latency = juce::jlimit (0, maxLatency, out->hitIndex > 0 ? out->hitIndex : 0);
     {
@@ -1190,6 +1266,21 @@ void PreChorusProcessor::render()
     reportedLatency.store (newLatency);
     if (newLatency != getLatencySamples()) setLatencySamples (newLatency);
 }
+
+void PreChorusProcessor::render()
+{
+    ++renderRequestCount;
+    ignoreBelowGen = renderRequestCount.load();       // any background job that started earlier is now stale
+    publishRender (buildRender());
+}
+
+void PreChorusProcessor::requestAsyncRender()
+{
+    ++renderRequestCount;
+    renderRequested.store (true);
+    renderWorker->notify();
+}
+
 
 // ---------------- Realtime Process Block with Ducking ----------------
 
@@ -1288,7 +1379,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             else
             {
                 captureWritePos = 0; captureSilenceCounter = 0;
-                captureTargetSamples = juce::jmin (captureRingBuffer.getNumSamples(), (int) (hostSampleRate * 8.0));
+                captureTargetSamples = juce::jmin (captureRingBuffer.getNumSamples(), (int) (hostSampleRate * (maxSourceSec.load() > 12 ? (double) maxSourceSec.load() : 8.0)));
                 captureState.store (CaptureState::recording);
             }
         }
@@ -1311,7 +1402,7 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
                 const double secPerBeat = 60.0 / juce::jlimit (30.0, 300.0, hostBpm.load());
                 captureTargetSamples = (int) (beatFractions[mode - 1] * secPerBeat * hostSampleRate);
             }
-            else captureTargetSamples = (int) (hostSampleRate * 6.0);
+            else captureTargetSamples = (int) (hostSampleRate * (maxSourceSec.load() > 12 ? (double) maxSourceSec.load() * 0.5 : 6.0));
             captureTargetSamples = juce::jlimit (1, captureRingBuffer.getNumSamples(), captureTargetSamples);
         }
     }
@@ -1431,9 +1522,31 @@ void PreChorusProcessor::startVoice (float gain, double rate, int sampleOffset)
     }
     if (best != nullptr)
     {
+        const double r = juce::jlimit (0.125, 8.0, rate);
+
+        // Keytrack alignment: transposing changes playback speed, so the hit would no longer land at the
+        // reported (PDC) latency D. Play from position p0 so the hit arrives exactly D samples after the note:
+        // faster (r > 1): start later by D - H/r; slower (r < 1): start p0 = H - D*r into the swarm.
+        double skip = 0.0;
+        int extraDelay = 0;
+        const int latencyD = reportedLatency.load();
+        if (latencyD > 0 && ! juce::exactlyEqual (r, 1.0))
+        {
+            if (auto rs = getRendered())
+            {
+                const double H = (double) rs->hitIndex;
+                if (H > 0.0)
+                {
+                    const double p0 = H - (double) latencyD * r;
+                    if (p0 >= 0.0) skip = p0;
+                    else extraDelay = (int) std::lround ((double) latencyD - H / r);
+                }
+            }
+        }
+
         best->active = true;
-        best->pos = -(double) juce::jmax (0, sampleOffset) * rate; // negative = starts later in this block
-        best->rate = juce::jlimit (0.125, 8.0, rate);
+        best->pos = -(double) (juce::jmax (0, sampleOffset) + juce::jmax (0, extraDelay)) * r + skip; // negative = starts later in this block
+        best->rate = r;
         best->gain = gain;
         best->id = ++voiceCounter;
     }
@@ -1481,7 +1594,10 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter,
     if (! f.existsAsFile()) return false;
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate < 1000.0 || reader->numChannels == 0) return false;
-    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 12.0));
+    const int maxSec = maxSourceSec.load();
+    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * (double) maxSec));
+    lastLoadFileSec.store ((int) std::ceil ((double) reader->lengthInSamples / reader->sampleRate));
+    lastLoadUsedSec.store ((int) std::ceil ((double) len / reader->sampleRate));
 
     // Always store stereo: the render engine unconditionally reads both channels of the
     // source buffer, so a mono file loaded as a 1-channel buffer would read past the end
@@ -1502,6 +1618,8 @@ bool PreChorusProcessor::loadSampleFile (const juce::File& f, bool previewAfter,
         const juce::ScopedLock sl (sourceLock);
         loadedBuffer = std::move (buf);
         loadedSR = reader->sampleRate;
+        loadedEmbedCache.valid = false;
+        demoKind = -1;
     }
     currentFile = f;
     refreshFolderList (f);
@@ -1536,7 +1654,7 @@ void PreChorusProcessor::prevSample()
 
 bool PreChorusProcessor::exportWav (const juce::File& dest)
 {
-    if (dirty.exchange (false)) render();
+    if (dirty.exchange (false) || renderRequested.load() || renderInFlight.load()) render();   // never export a stale render
     auto r = getRendered();
     if (r == nullptr || r->audio.getNumSamples() == 0) return false;
     const int n = r->audio.getNumSamples();
@@ -1560,14 +1678,164 @@ bool PreChorusProcessor::exportWav (const juce::File& dest)
     return true;
 }
 
+// ---------------- Embedded audio (project portability) ----------------
+
+namespace
+{
+    constexpr int kMaxEmbedChars = 40 * 1000 * 1000;   // total base64 characters stored per project (~30 MB of FLAC)
+    constexpr double kMaxEmbedSeconds = 130.0;         // decoder safety limit per item
+}
+
+juce::String PreChorusProcessor::encodeAudio (const juce::AudioBuffer<float>& b, double sr)
+{
+    if (b.getNumSamples() <= 0 || b.getNumChannels() < 1) return {};
+    juce::MemoryBlock mb;
+    {
+        auto os = std::make_unique<juce::MemoryOutputStream> (mb, false);
+        juce::FlacAudioFormat flac;
+        std::unique_ptr<juce::AudioFormatWriter> w (flac.createWriterFor (os.get(), sr, 2, 24, {}, 5));
+        if (w == nullptr) return {};
+        os.release();                                   // the writer owns the stream now
+        const juce::AudioBuffer<float>* src = &b;
+        juce::AudioBuffer<float> stereo;
+        if (b.getNumChannels() < 2)
+        {
+            stereo.makeCopyOf (b);
+            stereo.setSize (2, b.getNumSamples(), true);
+            stereo.copyFrom (1, 0, b, 0, 0, b.getNumSamples());
+            src = &stereo;
+        }
+        w->writeFromAudioSampleBuffer (*src, 0, b.getNumSamples());
+    }                                                   // writer destroyed here: flushes into mb
+    return juce::Base64::toBase64 (mb.getData(), mb.getSize());
+}
+
+bool PreChorusProcessor::decodeAudio (const juce::String& b64, juce::AudioBuffer<float>& out, double& sr)
+{
+    if (b64.isEmpty() || b64.length() > kMaxEmbedChars) return false;
+    juce::MemoryOutputStream mo;
+    if (! juce::Base64::convertFromBase64 (mo, b64)) return false;
+    const auto mb = mo.getMemoryBlock();
+    if (mb.getSize() < 64) return false;
+
+    juce::FlacAudioFormat flac;
+    std::unique_ptr<juce::AudioFormatReader> r (flac.createReaderFor (new juce::MemoryInputStream (mb.getData(), mb.getSize(), false), true));
+    if (r == nullptr || r->numChannels < 1 || r->numChannels > 2 || r->lengthInSamples <= 0) return false;
+    if (r->sampleRate < 8000.0 || r->sampleRate > 384000.0) return false;
+    if ((double) r->lengthInSamples > r->sampleRate * kMaxEmbedSeconds) return false;
+
+    const int len = (int) r->lengthInSamples;
+    juce::AudioBuffer<float> buf (2, len);
+    if (r->numChannels >= 2)
+    {
+        if (! r->read (&buf, 0, len, 0, true, true)) return false;
+    }
+    else
+    {
+        juce::AudioBuffer<float> mono (1, len);
+        if (! r->read (&mono, 0, len, 0, true, true)) return false;
+        buf.copyFrom (0, 0, mono, 0, 0, len);
+        buf.copyFrom (1, 0, mono, 0, 0, len);
+    }
+    out = std::move (buf);
+    sr = r->sampleRate;
+    return true;
+}
+
+void PreChorusProcessor::restoreEmbeddedAudio (const juce::ValueTree& embed, bool& loadedRestored)
+{
+    // Slots not present in the project are reset (a restore must reproduce the saved project, not merge into the live one).
+    const juce::ScopedLock sl (sourceLock);
+    for (int i = 0; i < kNumHistorySlots; ++i)
+    {
+        captureSlots[(size_t) i].setSize (2, 0);
+        captureSlotFilled[(size_t) i] = false;
+        slotEmbedCache[(size_t) i].valid = false;
+    }
+    slot0IsDefaultDemo = false;
+
+    for (int c = 0; c < embed.getNumChildren(); ++c)
+    {
+        const auto item = embed.getChild (c);
+        if (! item.hasType ("AUDIO")) continue;
+        juce::AudioBuffer<float> buf;
+        double sr = 44100.0;
+        if (! decodeAudio (item.getProperty ("data").toString(), buf, sr)) continue;
+        const auto kind = item.getProperty ("kind").toString();
+        if (kind == "loaded")
+        {
+            loadedBuffer = std::move (buf);
+            loadedSR = sr;
+            loadedEmbedCache.valid = false;
+            demoKind = -1;
+            loadedRestored = true;
+        }
+        else if (kind == "slot")
+        {
+            const int idx = (int) item.getProperty ("idx", -1);
+            if (idx < 0 || idx >= kNumHistorySlots) continue;
+            captureSlots[(size_t) idx] = std::move (buf);
+            captureSlotSRs[(size_t) idx] = sr;
+            captureSlotFilled[(size_t) idx] = true;
+            slotEmbedCache[(size_t) idx].valid = false;
+        }
+    }
+    if (! captureSlotFilled[0])          // slot 0 was the untouched startup chord when saved (it is never embedded)
+    {
+        captureSlots[0] = makeStartupChord (44100.0);
+        captureSlotSRs[0] = 44100.0;
+        captureSlotFilled[0] = true;
+        slot0IsDefaultDemo = true;
+    }
+}
+
 void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    state.removeChild (state.getChildWithName ("EMBED"), nullptr);   // never carry stale embedded audio forward
     state.setProperty ("stateVersion", kStateVersion, nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("activeSlot", activeSlot.load(), nullptr);
     state.setProperty ("captureLock", captureLockState.load(), nullptr);
+    state.setProperty ("simpleView", simpleView, nullptr);
+    state.setProperty ("embedAudio", embedAudio, nullptr);
+    state.setProperty ("maxSourceSec", maxSourceSec.load(), nullptr);
     if (uiWidth > 0) { state.setProperty ("uiWidth", uiWidth, nullptr); state.setProperty ("uiHeight", uiHeight, nullptr); }
+
+    int skipped = 0;
+    if (embedAudio)
+    {
+        juce::ValueTree embed ("EMBED");
+        int budget = kMaxEmbedChars;
+        const juce::ScopedLock sl (sourceLock);
+
+        auto addItem = [&] (const char* kind, int idx, EmbedCache& cache, const juce::AudioBuffer<float>& b, double sr)
+        {
+            if (! cache.valid) { cache.b64 = encodeAudio (b, sr); cache.valid = true; }
+            if (cache.b64.isEmpty()) return;
+            if (cache.b64.length() > budget) { ++skipped; return; }
+            budget -= cache.b64.length();
+            juce::ValueTree item ("AUDIO");
+            item.setProperty ("kind", kind, nullptr);
+            item.setProperty ("idx", idx, nullptr);
+            item.setProperty ("data", cache.b64, nullptr);
+            embed.appendChild (item, nullptr);
+        };
+
+        // Priority: active slot, loaded source, then the remaining history slots.
+        const int act = juce::jlimit (0, kNumHistorySlots - 1, activeSlot.load());
+        auto wantSlot = [&] (int i) { return captureSlotFilled[(size_t) i] && ! (i == 0 && slot0IsDefaultDemo); };
+        if (wantSlot (act)) addItem ("slot", act, slotEmbedCache[(size_t) act], captureSlots[(size_t) act], captureSlotSRs[(size_t) act]);
+        if (demoKind < 0 && currentFile != juce::File() && loadedBuffer.getNumSamples() > 0)
+            addItem ("loaded", -1, loadedEmbedCache, loadedBuffer, loadedSR);
+        for (int i = 0; i < kNumHistorySlots; ++i)
+            if (i != act && wantSlot (i))
+                addItem ("slot", i, slotEmbedCache[(size_t) i], captureSlots[(size_t) i], captureSlotSRs[(size_t) i]);
+
+        state.appendChild (embed, nullptr);
+    }
+    state.setProperty ("demoKind", demoKind, nullptr);
+    lastEmbedSkipped.store (skipped);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1579,16 +1847,170 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (! state.isValid() || ! state.hasType (apvts.state.getType())) return; // malformed: keep current state
     if ((int) state.getProperty ("stateVersion", 1) > kStateVersion) return;  // future version: refuse safely
 
+    auto embed = state.getChildWithName ("EMBED");
+    state.removeChild (embed, nullptr);   // keep the (large) audio out of the live parameter tree
     apvts.replaceState (state);
-    // Restore never changes the saved Source Mode: a missing or present file is simply reloaded.
+
+    simpleView = (bool) state.getProperty ("simpleView", false);   // projects from v0.0.1 keep the full view
+    embedAudio = (bool) state.getProperty ("embedAudio", true);
+    setMaxSourceSeconds ((int) state.getProperty ("maxSourceSec", 12));   // projects from v0.0.1 keep their 12 s limit
+    bool loadedRestored = false;
+    if (embed.isValid()) restoreEmbeddedAudio (embed, loadedRestored);
+
+    // Restore never changes the saved Source Mode.
+    const int savedDemo = (int) state.getProperty ("demoKind", -1);
     juce::File f (state.getProperty ("file", "").toString());
-    if (f.existsAsFile()) loadSampleFile (f, false, false);
+    if (! loadedRestored)
+    {
+        if (savedDemo >= 0 && savedDemo < PCDemo::numKinds) loadDemoSource (savedDemo, false);
+        else if (f.existsAsFile()) loadSampleFile (f, false, false);
+    }
+    else if (f != juce::File())
+    {
+        currentFile = f;                       // display name only; audio comes from the project
+        if (f.existsAsFile()) refreshFolderList (f);
+    }
+    // loadDemoSource/loadSampleFile above only change the source mode when asked to; restore keeps it.
     activeSlot.store (juce::jlimit (0, kNumHistorySlots - 1, (int) state.getProperty ("activeSlot", 0)));
     captureLockState.store ((bool) state.getProperty ("captureLock", false));
     uiWidth = state.getProperty ("uiWidth", 0);
     uiHeight = state.getProperty ("uiHeight", 0);
     abSnapshots[0] = {}; abSnapshots[1] = {}; abSlotB = false;
+    // A project load is not an undoable edit: start a fresh history (absorb the restore's own parameter callbacks).
+    undoStack.clear(); redoStack.clear();
+    undoBaseline = soundDesignSnapshot();
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
     dirty = true;
+}
+
+void PreChorusProcessor::setMaxSourceSeconds (int seconds)
+{
+    const int snapped = seconds <= 12 ? 12 : seconds <= 30 ? 30 : seconds <= 60 ? 60 : 120;
+    if (snapped == maxSourceSec.load()) return;
+    maxSourceSec.store (snapped);
+    if (hostSampleRate > 1000.0)
+    {
+        // The audio thread owns the capture ring buffer: pause it while the buffer is reallocated.
+        suspendProcessing (true);
+        captureRingBuffer.setSize (2, (int) (hostSampleRate * (double) snapped), false, true, false);
+        captureWritePos = 0;
+        captureState.store (CaptureState::idle);
+        captureCommand.store (cmdNone);
+        suspendProcessing (false);
+    }
+}
+
+void PreChorusProcessor::loadDemoSource (int kind, bool switchFromLiveCapture)
+{
+    kind = juce::jlimit (0, (int) PCDemo::numKinds - 1, kind);
+    auto buf = PCDemo::generate (kind, hostSampleRate > 1000.0 ? hostSampleRate : 44100.0);
+    {
+        const juce::ScopedLock sl (sourceLock);
+        loadedSR = hostSampleRate > 1000.0 ? hostSampleRate : 44100.0;
+        loadedBuffer = std::move (buf);
+        loadedEmbedCache.valid = false;
+        demoKind = kind;
+    }
+    currentFile = juce::File();
+    if (switchFromLiveCapture && (int) param (IDs::sourceMode) == 0) setParam (IDs::sourceMode, 1.0f);
+    dirty = true;
+}
+
+void PreChorusProcessor::logStatus (const juce::String& line)
+{
+    statusLog.add (line);
+    while (statusLog.size() > 50) statusLog.remove (0);
+}
+
+juce::String PreChorusProcessor::getDiagnosticsReport() const
+{
+    juce::String r;
+    r << "PreChorus diagnostics\n";
+    r << "Version: " << PRECHORUS_VERSION_STRING << "  (built " << __DATE__ << ")\n";
+    r << "Format: " << juce::AudioProcessor::getWrapperTypeDescription (wrapperType) << "\n";
+    r << "Host: " << juce::PluginHostType().getHostDescription() << "\n";
+    r << "OS: " << juce::SystemStats::getOperatingSystemName() << " / " << juce::SystemStats::getCpuModel() << "\n";
+    r << "Sample rate: " << hostSampleRate << "  Block size: " << hostBlockSize << "\n";
+    r << "Channels in/out: " << getTotalNumInputChannels() << "/" << getTotalNumOutputChannels()
+      << "  Latency: " << getLatencySamples() << " samples\n";
+    {
+        const juce::ScopedLock sl (sourceLock);
+        int filled = 0;
+        for (int i = 0; i < kNumHistorySlots; ++i) if (captureSlotFilled[(size_t) i]) ++filled;
+        r << "Source mode: " << (int) param (IDs::sourceMode) << "  Loaded: "
+          << (demoKind >= 0 ? juce::String ("demo ") + juce::String (demoKind) : currentFile.getFileName())
+          << " (" << loadedBuffer.getNumSamples() << " samples @ " << loadedSR << ")\n";
+        r << "Capture slots filled: " << filled << "/" << kNumHistorySlots << "  Active: " << activeSlot.load() << "\n";
+    }
+    r << "Max source length: " << maxSourceSec.load() << " s\n";
+    r << "Embed audio: " << (embedAudio ? "on" : "off") << "  Skipped (size cap): " << lastEmbedSkipped.load() << "\n";
+    r << "Voices: " << (int) param (IDs::voiceCount) << "  Character: " << (int) param (IDs::character)
+      << "  Seed: " << (int) param (IDs::seed) << "\n";
+    r << "Recent status:\n";
+    for (auto& l : statusLog) r << "  " << l << "\n";
+    return r;
+}
+
+// ---------------- Undo / Redo ----------------
+
+void PreChorusProcessor::updateUndoTracking()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (undoChangeFlag.exchange (false))
+    {
+        if (! undoBurstOpen)
+        {
+            undoBurstOpen = true;
+            if (undoBaseline.isValid())
+            {
+                undoStack.push_back (undoBaseline);
+                if (undoStack.size() > kUndoDepth) undoStack.erase (undoStack.begin());
+            }
+            redoStack.clear();
+        }
+        undoLastChangeMs = now;
+    }
+    else if (undoBurstOpen && now - undoLastChangeMs >= undoIdleMs)
+    {
+        undoBurstOpen = false;
+        undoBaseline = soundDesignSnapshot();
+    }
+}
+
+void PreChorusProcessor::undo()
+{
+    updateUndoTracking();                       // make sure a just-started edit has its before-state on the stack
+    const auto cur = soundDesignSnapshot();
+    while (! undoStack.empty() && undoStack.back().isEquivalentTo (cur)) undoStack.pop_back();
+    if (undoStack.empty()) return;
+    redoStack.push_back (cur);
+    if (redoStack.size() > kUndoDepth) redoStack.erase (redoStack.begin());
+    const auto target = undoStack.back();
+    undoStack.pop_back();
+    applySoundDesignSnapshot (target);
+    undoBaseline = target;                      // absorb the callbacks caused by applying it
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
+}
+
+void PreChorusProcessor::redo()
+{
+    updateUndoTracking();
+    const auto cur = soundDesignSnapshot();
+    while (! redoStack.empty() && redoStack.back().isEquivalentTo (cur)) redoStack.pop_back();
+    if (redoStack.empty()) return;
+    undoStack.push_back (cur);
+    if (undoStack.size() > kUndoDepth) undoStack.erase (undoStack.begin());
+    const auto target = redoStack.back();
+    redoStack.pop_back();
+    applySoundDesignSnapshot (target);
+    undoBaseline = target;
+    undoBurstOpen = true;
+    undoLastChangeMs = juce::Time::getMillisecondCounterHiRes();
+    undoChangeFlag.store (false);
 }
 
 // ---------------- A/B Comparison ----------------

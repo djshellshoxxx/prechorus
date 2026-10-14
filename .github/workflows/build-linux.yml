@@ -1,0 +1,115 @@
+name: Build Linux
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  DEPS: >-
+    ninja-build ccache xvfb libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev libxrandr-dev
+    libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev libxrender-dev libgl1-mesa-dev
+
+jobs:
+  linux-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y $DEPS
+
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build VST3, CLAP, Standalone and tests
+        run: cmake --build build --target PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone PreChorusTests --parallel 4
+
+      - name: Run regression tests
+        run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
+
+      - name: Validate VST3 (pluginval, strictness 8)
+        run: |
+          mkdir -p tools && cd tools
+          curl -fsSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_Linux.zip
+          unzip -oq pluginval.zip
+          cd ..
+          xvfb-run -a tools/pluginval --strictness-level 8 --validate-in-process --skip-gui-tests build/PreChorus_artefacts/Release/VST3/PreChorus.vst3
+
+      - name: Validate CLAP (clap-validator 0.3.2)
+        run: |
+          cd tools
+          curl -fsSL -o clap-validator.tar.gz https://github.com/free-audio/clap-validator/releases/download/0.3.2/clap-validator-0.3.2-ubuntu-18.04.tar.gz
+          tar xzf clap-validator.tar.gz
+          cd ..
+          CLAP="$(find build/PreChorus_artefacts/Release/CLAP -name '*.clap' | head -1)"
+          "$(find tools -name clap-validator -type f | head -1)" validate "$CLAP"
+
+  # Address + undefined-behaviour sanitizers over the regression suite.
+  linux-asan-ubsan:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y $DEPS
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-asan-${{ github.sha }}
+          restore-keys: ccache-asan-
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build tests
+        run: cmake --build build --target PreChorusTests --parallel 4
+      - name: Run regression tests under ASan/UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1:suppressions=${{ github.workspace }}/tools/ubsan.supp
+        run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
+
+  # Thread sanitizer: covers the background render worker and the capture/render hand-off.
+  # Runs on 24.04 (GCC 13): the GCC 11 TSan runtime on 22.04 does not intercept pthread_cond_clockwait and reports
+  # false "double lock" errors inside JUCE's WaitableEvent.
+  linux-tsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Allow TSan's memory layout on newer kernels
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y $DEPS
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-tsan-${{ github.sha }}
+          restore-keys: ccache-tsan-
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+      - name: Build tests
+        run: cmake --build build --target PreChorusTests --parallel 4
+      - name: Run regression tests under TSan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
