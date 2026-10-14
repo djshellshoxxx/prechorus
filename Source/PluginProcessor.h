@@ -111,6 +111,10 @@ struct RenderedSample
     double trimStartSec = 0.0, trimEndSec = 0.0;
     std::vector<float> pitchSemi;
     std::vector<float> gainLin;
+    // Per-voice metadata for the swarm view (read-only, never used by the audio thread)
+    struct VoiceInfo { float startSec = 0.0f; float pitchSemi = 0.0f; float pan = 0.0f; bool reversed = false; };
+    std::vector<VoiceInfo> voices;
+    double swellSec = 0.0;           // swell length, relative to the trimmed start (the hit lands at swellSec)
     static constexpr int envStep = 256;
 };
 
@@ -215,6 +219,12 @@ public:
     static juce::File getUserPresetFolder();
     bool saveUserPreset (const juce::File& f, juce::String& error);
     bool loadUserPreset (const juce::File& f, juce::String& error);
+    // Validation without applying (used by preset banks): returns the SNAPSHOT tree on success
+    static bool parsePresetXml (const juce::XmlElement& xml, juce::ValueTree& snapshot, juce::String& error);
+    static bool parsePresetFile (const juce::File& f, juce::ValueTree& snapshot, juce::String& error);
+    void loadInitPreset();            // every sound-design control back to its default (source untouched)
+    // Accessibility: high-contrast colours in the editor (stored with the project)
+    bool highContrast = false;
 
     // A<->B morph: interpolates the numeric sound-design parameters between the A and B snapshots.
     // The morph parameter is applied from the message thread (rate-limited) because it re-renders the swarm.

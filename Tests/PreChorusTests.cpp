@@ -7,6 +7,7 @@
 #include "../Source/PluginProcessor.h"
 #include "../Source/DemoSource.h"
 #include "../Source/Dsp.h"
+#include "../Source/PresetLibrary.h"
 
 class PreChorusCoreTests : public juce::UnitTest
 {
@@ -1206,6 +1207,112 @@ public:
             bool started = false;
             for (auto& v : p.voices) if (v.active) { started = true; expectWithinAbsoluteError (v.pos, (double) (bs - 100), 1.5); }
             expect (started);
+        }
+
+        beginTest ("preset library: tags, search, favourites, recents, rename/delete and bank round-trip");
+        {
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("prechorus_lib_test");
+            dir.deleteRecursively();
+            auto presets = dir.getChildFile ("Presets"); presets.createDirectory();
+            PreChorusProcessor p; juce::String err;
+            expect (p.saveUserPreset (presets.getChildFile ("My Riser.pcpreset"), err));
+            presets.getChildFile ("Sub").createDirectory();
+            expect (p.saveUserPreset (presets.getChildFile ("Sub").getChildFile ("Deep Pad.pcpreset"), err));
+            {
+                PresetLibrary lib (presets, dir.getChildFile ("settings.xml"));
+                expectEquals ((int) lib.entries().size(), PreChorusProcessor::getFactoryPresetNames().size() + 2);
+                expectEquals (PreChorusProcessor::getFactoryPresetNames().size(), 24);
+                for (int i = 0; i < PreChorusProcessor::getFactoryPresetNames().size(); ++i)
+                    expect (! PreChorusProcessor::getFactoryPresetTags (i).isEmpty());
+                auto dubs = lib.filter ("", juce::StringArray { "Dubstep" }, false, 0);
+                expect (dubs.size() >= 3);
+                auto hit = lib.filter ("riser edm", {}, false, 0);        // every word must match name/tags
+                expect (! hit.empty());
+                for (int i : hit) expect (lib.entries()[(size_t) i].name.containsIgnoreCase ("riser") || lib.entries()[(size_t) i].tags.contains ("EDM", true));
+                expect (lib.filter ("zzzz-nothing", {}, false, 0).empty());
+                auto users = lib.filter ("", juce::StringArray { "User" }, false, 0);
+                expectEquals ((int) users.size(), 2);
+                lib.toggleFavorite (users[0]);
+                lib.markRecent (lib.entries()[(size_t) users[1]].key);
+                expectEquals ((int) lib.filter ("", {}, true, 0).size(), 1);
+                expect (lib.filter ("", {}, false, 1).front() == users[1]);   // most recent first
+            }
+            {
+                PresetLibrary lib (presets, dir.getChildFile ("settings.xml"));     // favourites persist
+                expectEquals ((int) lib.filter ("", {}, true, 0).size(), 1);
+                const int idx = lib.indexOfKey ("U:My Riser.pcpreset");
+                expect (idx >= 0);
+                expect (lib.renameUser (idx, "Renamed Riser", err));
+                expect (presets.getChildFile ("Renamed Riser.pcpreset").existsAsFile());
+                expect (lib.indexOfKey ("U:Renamed Riser.pcpreset") >= 0);
+                expect (lib.renameUser (lib.indexOfKey ("U:Renamed Riser.pcpreset"), "Sub/../evil", err));   // path separators are neutralised
+                expect (! presets.getParentDirectory().getChildFile ("evil.pcpreset").exists() && ! presets.getChildFile ("evil.pcpreset").exists());
+                for (auto& e : lib.entries()) if (e.name.containsIgnoreCase ("evil")) expect (e.file.getParentDirectory() == presets);
+                for (auto& e : lib.entries()) if (e.name.containsIgnoreCase ("evil")) expect (lib.renameUser (lib.indexOfKey (e.key), "Renamed Riser", err));
+                expect (! lib.renameUser (0, "x", err));                              // factory presets are read-only
+                // bank export / import
+                auto bank = dir.getChildFile ("test.pcbank");
+                juce::Array<juce::File> files { presets.getChildFile ("Renamed Riser.pcpreset"), presets.getChildFile ("Sub").getChildFile ("Deep Pad.pcpreset") };
+                expect (lib.exportBank (files, bank, "My Bank", "Tester", err));
+                PresetLibrary other (dir.getChildFile ("Other"), dir.getChildFile ("o.xml"));
+                juce::String report;
+                const int nImp = other.importBank (bank, report); logMessage ("import: " + report);
+                expectEquals (nImp, 2);
+                expect (dir.getChildFile ("Other").getChildFile ("Banks").getChildFile ("My Bank").getChildFile ("Renamed Riser.pcpreset").existsAsFile());
+                expectEquals ((int) other.filter ("", juce::StringArray { "User" }, false, 0).size(), 2);
+                juce::ValueTree a, b;
+                expect (PreChorusProcessor::parsePresetFile (files[0], a, err));
+                expect (PreChorusProcessor::parsePresetFile (dir.getChildFile ("Other").getChildFile ("Banks").getChildFile ("My Bank").getChildFile ("Renamed Riser.pcpreset"), b, err));
+                expect (a.isEquivalentTo (b));
+                expect (lib.deleteUser (lib.indexOfKey ("U:Renamed Riser.pcpreset"), err));
+                expect (! presets.getChildFile ("Renamed Riser.pcpreset").exists());
+            }
+            dir.deleteRecursively();
+        }
+
+        beginTest ("preset banks reject zip-slip, absolute paths, oversize entries, bad XML, duplicates and foreign products");
+        {
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("prechorus_bank_test");
+            dir.deleteRecursively(); dir.createDirectory();
+            PreChorusProcessor p; juce::String err;
+            auto good = dir.getChildFile ("good.pcpreset");
+            expect (p.saveUserPreset (good, err));
+            juce::MemoryBlock goodData; good.loadFileAsData (goodData);
+            auto manifest = [] (const char* product, int schema)
+            { return juce::String ("<PRECHORUS_BANK product=\"") + product + "\" schema=\"" + juce::String (schema) + "\" name=\"Evil\"/>"; };
+            auto build = [&] (const juce::File& dest, const juce::String& man, std::vector<std::pair<juce::String, juce::MemoryBlock>> entries)
+            {
+                juce::ZipFile::Builder b;
+                for (auto& e : entries) b.addEntry (new juce::MemoryInputStream (e.second, true), 5, e.first, juce::Time::getCurrentTime());
+                if (man.isNotEmpty()) b.addEntry (new juce::MemoryInputStream (man.toRawUTF8(), (size_t) man.getNumBytesAsUTF8(), true), 5, "manifest.xml", juce::Time::getCurrentTime());
+                dest.deleteFile(); juce::FileOutputStream os (dest); b.writeToStream (os, nullptr);
+            };
+            juce::MemoryBlock huge; huge.setSize (300 * 1024); huge.fillWith (' ');
+            juce::MemoryBlock junk ("<not-a-preset/>", 15);
+            juce::MemoryBlock garbage ("\x01\x02 not xml at all", 20);
+            auto bad = dir.getChildFile ("bad.pcbank");
+            build (bad, manifest ("PreChorus", 1), { { "../../evil.pcpreset", goodData }, { "/abs/evil.pcpreset", goodData },
+                                                      { "C:\\evil.pcpreset", goodData }, { "presets/ok.pcpreset", goodData },
+                                                      { "presets/OK.pcpreset", goodData }, { "presets/huge.pcpreset", huge },
+                                                      { "presets/junk.pcpreset", junk }, { "presets/garbage.pcpreset", garbage },
+                                                      { "presets/notpreset.txt", goodData } });
+            PresetLibrary lib (dir.getChildFile ("Presets"), dir.getChildFile ("s.xml"));
+            juce::String report;
+            expectEquals (lib.importBank (bad, report), 1);                         // only presets/ok.pcpreset survives
+            expect (! dir.getChildFile ("evil.pcpreset").exists() && ! dir.getParentDirectory().getChildFile ("evil.pcpreset").exists());
+            auto foreign = dir.getChildFile ("foreign.pcbank");
+            build (foreign, manifest ("SomethingElse", 1), { { "presets/a.pcpreset", goodData } });
+            expectEquals (lib.importBank (foreign, report), 0);
+            auto future = dir.getChildFile ("future.pcbank");
+            build (future, manifest ("PreChorus", 2), { { "presets/a.pcpreset", goodData } });
+            expectEquals (lib.importBank (future, report), 0);
+            auto noMan = dir.getChildFile ("noman.pcbank");
+            build (noMan, {}, { { "presets/a.pcpreset", goodData } });
+            expectEquals (lib.importBank (noMan, report), 0);
+            auto notZip = dir.getChildFile ("notzip.pcbank"); notZip.replaceWithText ("hello");
+            expectEquals (lib.importBank (notZip, report), 0);
+            expect (! PresetLibrary::isSafeEntryName ("a/../b") && PresetLibrary::isSafeEntryName ("presets/a.pcpreset"));
+            dir.deleteRecursively();
         }
     }
 };

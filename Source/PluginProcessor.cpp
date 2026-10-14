@@ -964,6 +964,7 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
         double readPos = 0.0;
         const int voiceActiveSamples = totalSwarmLen - voiceStartSample;
         if (voiceActiveSamples <= 0) continue;
+        out->voices.push_back ({ (float) ((double) voiceStartSample / sr), initPitchSemi, initPan, isRev });
 
         for (int i = voiceStartSample; i < totalSwarmLen; ++i)
         {
@@ -1508,6 +1509,8 @@ std::shared_ptr<RenderedSample> PreChorusProcessor::buildRender()
 
     out->audio = std::move (outBuf);
     out->hitIndex = hitOut;
+    out->swellSec = (double) swellLen / sr - out->trimStartSec;
+    for (auto& vi : out->voices) vi.startSec -= (float) out->trimStartSec;
     return out;
 }
 
@@ -2084,6 +2087,7 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("exportRate", exportSettings.rate, nullptr);
     state.setProperty ("exportNormalise", exportSettings.normalise, nullptr);
     state.setProperty ("exportTrimTail", exportSettings.trimTail, nullptr);
+    state.setProperty ("highContrast", highContrast, nullptr);
     state.setProperty ("smartTrim", smartTrimCapture, nullptr);
     state.setProperty ("smartNormalise", smartNormaliseCapture, nullptr);
     state.setProperty ("lockedGroups", (int) lockedGroups, nullptr);
@@ -2158,6 +2162,7 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     exportSettings.rate = juce::jlimit (0, 3, (int) state.getProperty ("exportRate", 0));
     exportSettings.normalise = (bool) state.getProperty ("exportNormalise", false);
     exportSettings.trimTail = (bool) state.getProperty ("exportTrimTail", false);
+    highContrast = (bool) state.getProperty ("highContrast", false);
     smartTrimCapture = (bool) state.getProperty ("smartTrim", true);
     smartNormaliseCapture = (bool) state.getProperty ("smartNormalise", false);
     lockedGroups = (juce::uint32) juce::jlimit (0, 63, (int) state.getProperty ("lockedGroups", 0));
@@ -2396,18 +2401,37 @@ bool PreChorusProcessor::saveUserPreset (const juce::File& f, juce::String& erro
     return true;
 }
 
-bool PreChorusProcessor::loadUserPreset (const juce::File& f, juce::String& error)
+bool PreChorusProcessor::parsePresetXml (const juce::XmlElement& xml, juce::ValueTree& snapshot, juce::String& error)
 {
-    if (! f.existsAsFile() || f.getSize() > 256 * 1024) { error = "Preset file is missing or too large."; return false; }
-    auto xml = juce::XmlDocument::parse (f);
-    if (xml == nullptr) { error = "Preset file is not valid XML."; return false; }
-    auto t = juce::ValueTree::fromXml (*xml);
+    auto t = juce::ValueTree::fromXml (xml);
     if (! t.hasType ("PRECHORUS_PRESET")) { error = "Not a PreChorus preset."; return false; }
     if ((int) t.getProperty ("schema", 0) != 1) { error = "Unsupported preset version."; return false; }
     auto snap = t.getChildWithName ("SNAPSHOT");
     if (! snap.isValid() || snap.getNumProperties() == 0) { error = "Preset contains no parameters."; return false; }
+    snapshot = snap;
+    return true;
+}
+
+bool PreChorusProcessor::parsePresetFile (const juce::File& f, juce::ValueTree& snapshot, juce::String& error)
+{
+    if (! f.existsAsFile() || f.getSize() > 256 * 1024) { error = "Preset file is missing or too large."; return false; }
+    auto xml = juce::XmlDocument::parse (f);
+    if (xml == nullptr) { error = "Preset file is not valid XML."; return false; }
+    return parsePresetXml (*xml, snapshot, error);
+}
+
+bool PreChorusProcessor::loadUserPreset (const juce::File& f, juce::String& error)
+{
+    juce::ValueTree snap;
+    if (! parsePresetFile (f, snap, error)) return false;
     applySoundDesignSnapshot (snap);
     return true;
+}
+
+void PreChorusProcessor::loadInitPreset()
+{
+    applySoundDesignDefaults();
+    regenerateSeed();
 }
 
 juce::AudioProcessorEditor* PreChorusProcessor::createEditor() { return new PreChorusEditor (*this); }
