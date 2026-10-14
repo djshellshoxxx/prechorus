@@ -36,6 +36,9 @@ jobs:
       - name: Run regression tests
         run: xvfb-run -a "$(find build -name PreChorusTests -type f | head -1)"
 
+      - name: Parameter reference is up to date
+        run: python3 tools/gen_param_reference.py --check
+
       - name: Validate VST3 (pluginval, strictness 8)
         run: |
           mkdir -p tools && cd tools

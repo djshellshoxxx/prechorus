@@ -74,7 +74,7 @@ Status key: **Verified** = implemented and covered by an automated test or valid
 ```
 cmake -S . -B /tmp/pcbuild -DCMAKE_BUILD_TYPE=Release
 cmake --build /tmp/pcbuild --target PreChorusTests PreChorus_VST3 PreChorus_CLAP PreChorus_Standalone -j4
-xvfb-run -a …/PreChorusTests            # 46 test groups, all passed (baseline had 27)
+xvfb-run -a …/PreChorusTests            # 45 test groups, all passed
 pluginval --strictness-level 8 --validate-in-process --skip-gui-tests PreChorus.vst3   # exit 0
 clap-validator validate PreChorus.clap  # 21 tests run, 18 passed, 0 failed, 3 skipped
 python3 tools/gen_param_reference.py --check
