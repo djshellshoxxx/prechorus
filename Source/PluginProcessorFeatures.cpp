@@ -208,9 +208,11 @@ void PreChorusProcessor::postProcessCapture (juce::AudioBuffer<float>& b)
         PCDsp::smartTrim (b, hostSampleRate, -50.0f, 0.05, 10.0, smartNormaliseCapture, -1.0f, smartTrimCapture);
     const double secs = (double) b.getNumSamples() / juce::jmax (1.0, hostSampleRate);
     const double trimmed = (double) (before - b.getNumSamples()) / juce::jmax (1.0, hostSampleRate);
-    lastCaptureSummary = "Captured " + juce::String (secs, 2) + " s"
-                         + (trimmed > 0.005 ? " (trimmed " + juce::String (trimmed, 2) + " s of silence)" : juce::String())
-                         + ". RETAKE re-records into the same slot.";
+    juce::String summary ("Captured ");
+    summary << juce::String (secs, 2) << " s";
+    if (trimmed > 0.005) summary << " (trimmed " << juce::String (trimmed, 2) << " s of silence)";
+    summary << ". RETAKE re-records into the same slot.";
+    lastCaptureSummary = summary;
 }
 
 void PreChorusProcessor::retakeCapture()

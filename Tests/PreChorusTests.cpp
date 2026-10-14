@@ -1305,7 +1305,8 @@ public:
             };
             juce::MemoryBlock huge; huge.setSize (300 * 1024); huge.fillWith (' ');
             juce::MemoryBlock junk ("<not-a-preset/>", 15);
-            juce::MemoryBlock garbage ("\x01\x02 not xml at all", 20);
+            const char garbageText[] = "\x01\x02 not xml at all";
+            juce::MemoryBlock garbage (garbageText, sizeof (garbageText) - 1);
             auto bad = dir.getChildFile ("bad.pcbank");
             build (bad, manifest ("PreChorus", 1), { { "../../evil.pcpreset", goodData }, { "/abs/evil.pcpreset", goodData },
                                                       { "C:\\evil.pcpreset", goodData }, { "presets/ok.pcpreset", goodData },
