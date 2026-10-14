@@ -411,3 +411,27 @@ void PreChorusProcessor::processAutoTargets (double blockPpq, double bpm, int be
         }
     }
 }
+
+// ---------------- Performance variations ----------------
+
+void PreChorusProcessor::storeVariation (int index)
+{
+    if (index < 0 || index >= kNumVariations) return;
+    variations[(size_t) index] = soundDesignSnapshot();
+    activeVariation = index;
+}
+
+void PreChorusProcessor::recallVariation (int index)
+{
+    if (! isVariationStored (index)) return;
+    applySoundDesignSnapshot (variations[(size_t) index]);
+    activeVariation = index;
+    morphActive = false;
+}
+
+void PreChorusProcessor::clearVariation (int index)
+{
+    if (index < 0 || index >= kNumVariations) return;
+    variations[(size_t) index] = {};
+    if (activeVariation == index) activeVariation = -1;
+}

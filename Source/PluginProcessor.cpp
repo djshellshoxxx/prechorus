@@ -312,6 +312,7 @@ void PreChorusProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     captureState.store (CaptureState::idle);
     captureCommand.store (cmdNone);
 
+    dryPrev = param (IDs::dry); wetPrev = param (IDs::wet); duckPrev = 1.0f;
     scBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
     scBuffer.clear();
     dryDelay.setSize (2, (int) (sampleRate * kMaxLatencySeconds) + juce::jmax (1, samplesPerBlock));
@@ -671,6 +672,7 @@ void PreChorusProcessor::timerCallback()
     }
     commitFinishedCapture();
     applyMidiMappings();
+    if (const int pv = pendingVariation.exchange (-1); pv >= 0) recallVariation (pv);
     if (morphDirty.load() && juce::Time::getMillisecondCounterHiRes() - lastMorphApplyMs >= 120.0)
     {
         morphDirty.store (false);
@@ -1771,6 +1773,11 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& hostBuffer, juc
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
+        if (m.isNoteOn() && variationNotes && m.getNoteNumber() >= variationBaseNote && m.getNoteNumber() < variationBaseNote + kNumVariations)
+        {
+            pendingVariation.store (m.getNoteNumber() - variationBaseNote);   // applied on the message thread; not a trigger
+            continue;
+        }
         if (m.isNoteOn())
         {
             bool allowTrigger = true;
@@ -1831,7 +1838,9 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& hostBuffer, juc
         }
         dryDelayWrite = (dryDelayWrite + numSamples) % dlLen;
     }
-    buffer.applyGain (dryLvl);
+    // Level controls are ramped across the block so automation of Dry / Swarm Wet / Ducking never zippers.
+    buffer.applyGainRamp (0, numSamples, dryPrev, dryLvl);
+    const float wetEff0 = wetPrev * duckPrev, wetEff1 = wetLvl * duckGain;
 
     // Optional stem outputs: Swarm (build-up), Hit (impact + tail) and Dry. Main out = Swarm + Hit + Dry.
     StemTargets stems;
@@ -1854,11 +1863,12 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& hostBuffer, juc
         for (auto& v : voices)
         {
             if (! v.active) continue;
-            renderVoice (buffer, *r, v, numSamples, dryLvl, wetLvl, duckGain, &stems);
+            renderVoice (buffer, *r, v, numSamples, dryPrev, dryLvl, wetEff0, wetEff1, &stems);
             if (v.active) activePos = juce::jmax (activePos, (int) v.pos);
         }
     }
     playhead.store (activePos);
+    dryPrev = dryLvl; wetPrev = wetLvl; duckPrev = duckGain;
 
     float peak = 0.0f;
     for (int ch = 0; ch < hostBuffer.getNumChannels(); ++ch)
@@ -1914,8 +1924,8 @@ void PreChorusProcessor::startVoice (float gain, double rate, int sampleOffset)
     }
 }
 
-void PreChorusProcessor::renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry, float wet, float duckGain,
-                                      const StemTargets* stems)
+void PreChorusProcessor::renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry0, float dry1,
+                                      float wet0, float wet1, const StemTargets* stems)
 {
     const int total = r.audio.getNumSamples();
     const int hitAt = r.hitIndex >= 0 ? r.hitIndex : total;
@@ -1933,7 +1943,8 @@ void PreChorusProcessor::renderVoice (juce::AudioBuffer<float>& out, const Rende
         if (i0 >= total - 1) { v.active = false; break; }
         const float frac = (float) (pos - (double) i0);
         const bool inSwarm = i0 < hitAt;
-        const float g = v.gain * (inSwarm ? (wet * duckGain) : dry);
+        const float t = (float) i / (float) num;
+        const float g = v.gain * (inSwarm ? wet0 + (wet1 - wet0) * t : dry0 + (dry1 - dry0) * t);
         const float sL = (srcL[i0] + (srcL[i0 + 1] - srcL[i0]) * frac) * g;
         const float sR = (srcR[i0] + (srcR[i0 + 1] - srcR[i0]) * frac) * g;
         dstL[i] += sL;
@@ -2157,6 +2168,22 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("exportNormalise", exportSettings.normalise, nullptr);
     state.setProperty ("exportTrimTail", exportSettings.trimTail, nullptr);
     state.setProperty ("highContrast", highContrast, nullptr);
+    state.setProperty ("variationNotes", variationNotes, nullptr);
+    state.setProperty ("variationBaseNote", variationBaseNote, nullptr);
+    state.setProperty ("activeVariation", activeVariation, nullptr);
+    state.removeChild (state.getChildWithName ("VARIATIONS"), nullptr);
+    {
+        juce::ValueTree vars ("VARIATIONS");
+        for (int i = 0; i < kNumVariations; ++i)
+            if (variations[(size_t) i].isValid())
+            {
+                juce::ValueTree v ("VARIATION");
+                v.setProperty ("slot", i, nullptr);
+                v.appendChild (variations[(size_t) i].createCopy(), nullptr);
+                vars.appendChild (v, nullptr);
+            }
+        if (vars.getNumChildren() > 0) state.appendChild (vars, nullptr);
+    }
     state.setProperty ("smartTrim", smartTrimCapture, nullptr);
     state.setProperty ("smartNormalise", smartNormaliseCapture, nullptr);
     state.setProperty ("lockedGroups", (int) lockedGroups, nullptr);
@@ -2225,6 +2252,8 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     state.removeChild (embed, nullptr);   // keep the (large) audio out of the live parameter tree
     auto midiMapTree = state.getChildWithName ("MIDIMAP");
     state.removeChild (midiMapTree, nullptr);
+    auto variationTree = state.getChildWithName ("VARIATIONS");
+    state.removeChild (variationTree, nullptr);
     apvts.replaceState (state);
 
     exportSettings.format = juce::jlimit (0, 3, (int) state.getProperty ("exportFormat", 1));
@@ -2232,6 +2261,16 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
     exportSettings.normalise = (bool) state.getProperty ("exportNormalise", false);
     exportSettings.trimTail = (bool) state.getProperty ("exportTrimTail", false);
     highContrast = (bool) state.getProperty ("highContrast", false);
+    variationNotes = (bool) state.getProperty ("variationNotes", false);
+    variationBaseNote = juce::jlimit (0, 120, (int) state.getProperty ("variationBaseNote", 24));
+    activeVariation = juce::jlimit (-1, kNumVariations - 1, (int) state.getProperty ("activeVariation", -1));
+    for (auto& v : variations) v = {};
+    for (auto e : variationTree)
+    {
+        const int slot = (int) e.getProperty ("slot", -1);
+        auto snap = e.getChildWithName ("SNAPSHOT");
+        if (slot >= 0 && slot < kNumVariations && snap.isValid() && snap.getNumProperties() > 0) variations[(size_t) slot] = snap.createCopy();
+    }
     smartTrimCapture = (bool) state.getProperty ("smartTrim", true);
     smartNormaliseCapture = (bool) state.getProperty ("smartNormalise", false);
     lockedGroups = (juce::uint32) juce::jlimit (0, 63, (int) state.getProperty ("lockedGroups", 0));

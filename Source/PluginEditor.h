@@ -159,6 +159,7 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int, int) override;
     bool keyPressed (const juce::KeyPress& key) override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
     struct Knob
@@ -181,6 +182,7 @@ private:
     void savePresetDialog();
     void showKnobMenu (Knob&);
     void showThemeMenu();
+    void showVariationMenu (int index);
     void showExportMenu();
     void runExport();
     void updateLearnVisuals();
@@ -210,6 +212,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureComboAtt, sourceModeAtt, scaleComboAtt, dirComboAtt, postReleaseAtt, charAtt, seqAtt, stutterGridAtt, targetAtt, detectorAtt;
     juce::TextButton presetButton { "PRESETS" }, presetPrevButton { "<" }, presetNextButton { ">" },
                      exportOptionsButton { "v" }, themeButton { "v" }, retakeButton { "RETAKE" }, swarmViewButton { "SWARM VIEW" };
+    std::array<juce::TextButton, 4> variationButtons;
     bool showSwarm = false;
     juce::String lastSummaryShown;
     std::array<juce::TextButton, 8> historySlotButtons;

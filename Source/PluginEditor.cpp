@@ -791,6 +791,19 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
         proc.retakeCapture();
         setStatus ("Retake: armed. The new take replaces the previous one (unless that slot is locked).");
     };
+    for (int i = 0; i < PreChorusProcessor::kNumVariations; ++i)
+    {
+        auto& b = variationButtons[(size_t) i];
+        b.setButtonText ("V" + juce::String (i + 1));
+        b.setTitle ("Variation " + juce::String (i + 1));
+        b.setTooltip ("Performance variation " + juce::String (i + 1) + ": click to recall (or store, when empty). Right-click to store the current sound, clear it, or switch variations by MIDI note.");
+        b.onClick = [this, i] {
+            if (! proc.isVariationStored (i)) { proc.storeVariation (i); setStatus ("Variation " + juce::String (i + 1) + " stored."); }
+            else { proc.recallVariation (i); waveform.rebuild(); setStatus ("Variation " + juce::String (i + 1) + " recalled (the previous sound keeps playing until the new render is ready)."); }
+        };
+        b.onStateChange = [this, i] { juce::ignoreUnused (i); };
+        addAndMakeVisible (b);
+    }
     swarmViewButton.setClickingTogglesState (true);
     swarmViewButton.onClick = [this] {
         showSwarm = swarmViewButton.getToggleState();
@@ -799,6 +812,8 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
         swarmViewButton.setButtonText (showSwarm ? "WAVEFORM" : "SWARM VIEW");
         setStatus (showSwarm ? "Swarm view: one row per voice (top = left pan). Click to preview." : "Waveform view.");
     };
+    for (int i = 0; i < PreChorusProcessor::kNumVariations; ++i)
+        variationButtons[(size_t) i].addMouseListener (this, false);
     for (auto* b : { &exportOptionsButton, &themeButton, &retakeButton, &swarmViewButton, &presetButton, &presetPrevButton, &presetNextButton })
         addAndMakeVisible (b);
     addAndMakeVisible (levelBar);
@@ -1205,6 +1220,12 @@ void PreChorusEditor::timerCallback()
                                                                : (currentPresetKey.startsWith ("F:") ? currentPresetKey.substring (2)
                                                                                                      : currentPresetKey.substring (2).fromLastOccurrenceOf ("/", false, false).upToLastOccurrenceOf (".pcpreset", false, true)));
         updateLearnVisuals();
+        for (int i = 0; i < PreChorusProcessor::kNumVariations; ++i)
+        {
+            auto& b = variationButtons[(size_t) i];
+            b.setColour (juce::TextButton::buttonColourId, proc.getActiveVariation() == i ? PCColours::accent
+                                                          : (proc.isVariationStored (i) ? PCColours::neon.withAlpha (0.35f) : PCColours::panel2));
+        }
     }
 
     abButton.setButtonText (proc.isSlotBActive() ? "B" : "A");
@@ -1363,6 +1384,32 @@ void PreChorusEditor::showOptionsMenu()
                                 setStatus ("Window size " + juce::String (pct) + "%.");
                             }
                         });
+}
+
+void PreChorusEditor::mouseDown (const juce::MouseEvent& ev)
+{
+    if (! ev.mods.isPopupMenu()) return;
+    for (int i = 0; i < PreChorusProcessor::kNumVariations; ++i)
+        if (ev.eventComponent == &variationButtons[(size_t) i]) { showVariationMenu (i); return; }
+}
+
+void PreChorusEditor::showVariationMenu (int index)
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Store current sound in V" + juce::String (index + 1));
+    m.addItem (2, "Clear V" + juce::String (index + 1), proc.isVariationStored (index));
+    m.addSeparator();
+    m.addItem (3, "Switch variations with MIDI notes C1-D#1 (notes below the swarm range)", true, proc.variationNotes);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&variationButtons[(size_t) index]), [this, index] (int r)
+    {
+        if (r == 1) { proc.storeVariation (index); setStatus ("Variation " + juce::String (index + 1) + " stored."); }
+        else if (r == 2) { proc.clearVariation (index); setStatus ("Variation " + juce::String (index + 1) + " cleared."); }
+        else if (r == 3)
+        {
+            proc.variationNotes = ! proc.variationNotes;
+            setStatus (proc.variationNotes ? "MIDI notes C1-D#1 now switch variations V1-V4 (they no longer trigger the swarm)." : "MIDI notes trigger the swarm again.");
+        }
+    });
 }
 
 void PreChorusEditor::loadPresetEntry (const PresetLibrary::Entry& entry)
@@ -1728,6 +1775,12 @@ void PreChorusEditor::resized()
     freezeToggle.setBounds (trans.removeFromLeft (70));     trans.removeFromLeft (4);
     revConvergeToggle.setBounds (trans.removeFromLeft (82));trans.removeFromLeft (4);
     keytrackToggle.setBounds (trans.removeFromLeft (84));   trans.removeFromLeft (8);
+    for (int i = 0; i < PreChorusProcessor::kNumVariations; ++i)
+    {
+        variationButtons[(size_t) i].setBounds (trans.removeFromLeft (28).reduced (0, 1));
+        trans.removeFromLeft (2);
+    }
+    trans.removeFromLeft (6);
 
     syncCombo.setBounds (trans.removeFromRight (84));      trans.removeFromRight (4);
     syncToggle.setBounds (trans.removeFromRight (56));     trans.removeFromRight (4);

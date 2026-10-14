@@ -1404,6 +1404,44 @@ public:
             p.processBlock (b2, m2);
             expect (std::isfinite (b2.getMagnitude (0, bs)));
         }
+
+        beginTest ("performance variations store, recall, persist and switch by MIDI note");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.setParam (IDs::detune, 11.0f); p.setParam (IDs::character, 2.0f);
+            p.storeVariation (0);
+            p.setParam (IDs::detune, 33.0f); p.setParam (IDs::character, 5.0f);
+            p.storeVariation (2);
+            expect (p.isVariationStored (0) && p.isVariationStored (2) && ! p.isVariationStored (1));
+            p.recallVariation (0);
+            expectWithinAbsoluteError (p.param (IDs::detune), 11.0f, 0.51f);
+            expectEquals ((int) p.param (IDs::character), 2);
+            expectEquals (p.getActiveVariation(), 0);
+            p.recallVariation (1);                                  // empty slot: nothing changes
+            expectEquals (p.getActiveVariation(), 0);
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            PreChorusProcessor q; q.setStateInformation (blob.getData(), (int) blob.getSize());
+            expect (q.isVariationStored (0) && q.isVariationStored (2) && ! q.isVariationStored (1));
+            q.recallVariation (2);
+            expectWithinAbsoluteError (q.param (IDs::detune), 33.0f, 0.51f);
+            // MIDI note switching: selects instead of triggering
+            q.variationNotes = true; q.variationBaseNote = 24;
+            juce::AudioBuffer<float> buf (2, 256); buf.clear();
+            juce::MidiBuffer m; m.addEvent (juce::MidiMessage::noteOn (1, 24, 1.0f), 3);
+            q.processBlock (buf, m);
+            for (auto& v : q.voices) expect (! v.active);            // did not trigger the swarm
+            q.timerCallback();                                       // message thread applies the pending switch
+            expectEquals (q.getActiveVariation(), 0);
+            expectWithinAbsoluteError (q.param (IDs::detune), 11.0f, 0.51f);
+            juce::MidiBuffer m2; m2.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 3);
+            q.processBlock (buf, m2);
+            bool any = false; for (auto& v : q.voices) any = any || v.active;
+            expect (any);                                            // ordinary notes still trigger
+            q.clearVariation (0);
+            expect (! q.isVariationStored (0));
+        }
     }
 };
 

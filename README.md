@@ -1,6 +1,6 @@
 # PreChorus
 
-32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + CLAP + Standalone (Windows), AU on macOS builds, made with JUCE.
+32-Voice Swarm & Convergence Engine for vocals, instruments, and hits. Built for modern pop, EDM, future bass, dubstep, and breaks. VST3 + CLAP + Standalone (Windows and Linux), AU on macOS builds, made with JUCE.
 
 **Download:** see the [Releases](https://github.com/djshellshoxxx/prechorus/releases) page for the v0.0.1 beta installer, portable app, VST3 and CLAP. Release notes: [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
 
@@ -15,10 +15,11 @@
   - **Live Capture**: Real-time audio recording directly from your vocal/instrument track.
   - **Loaded Sample**: Pristine WAV, AIFF, FLAC, or MP3 one-shot and stem playback.
   - **Hybrid Layer**: Seamlessly layers live recorded vocal takes with loaded audio stems.
-  - **Slice Scatter**: Transient-splits the source and distributes different slices across the ensemble voices.
+  - **Slice Scatter**: Splits the source at its transients (8 equal slices if it has none) and distributes the slices across the ensemble voices.
 - **Capture History & Locking**:
   - **8 Performance Memory Slots (1–8)**: Instant switching between recent vocal takes or phrase captures.
   - **Lock Toggle**: Protects your chosen take from being overwritten while continuing to audition.
+- **Smart Capture**: Silence around each take is trimmed automatically (never below 50 ms), optional normalise to -1 dBFS, a live input meter with the threshold marker, and RETAKE to re-record into the same slot.
 - **Timed & Transient Capture**:
   - **Threshold Auto-Capture**: Auto-records when you sing or hit a note (customizable dB threshold) and cleanly auto-trims on silence release.
   - **BPM Sync Divisions**: Capture exact musical lengths: 1/16, 1/8, 1/4 (1 beat), 1/2 (2 beats), 1 Bar, and 2 Bars.
@@ -42,6 +43,9 @@
 - **String Ensemble**: Vintage Solina/ARP-inspired multi-rate dual-LFO modulation (0.6 Hz slow LFO + 6.0 Hz vibrato).
 - **Granular Cloud**: Grains form an ethereal ambient texture while remaining tightly tied to the source.
 - **Lo-Fi Choral**: Vintage bit-depth and sample-rate reduction (~11 kHz sample-and-hold) for gritty, crushed vocal chops.
+- **Vowel Choir**: Parallel formant filters gliding a-e-i-o-u across the build.
+- **Stadium Crowd**: Diffuse, noisy, detuned voices with per-voice pre-delay.
+- **Glitch Scatter**: Scrambled, randomly reversed and muted fragments of the source.
 
 ### 4. Convergence Engine & Musical Motion
 - **Convergence Macro (`MACRO` knob)**: A master knob scaling all enabled convergence dimensions simultaneously.
@@ -67,17 +71,22 @@
 - **Air Sheen**: Filtered high-frequency exciter (8.5 kHz+ saturator) applied to both the ensemble swell and target climax hit for repeatable, shimmering harmonic top-end air.
 - **Drive & Soft Clipping**: Analog saturation for harmonics and grit.
 - **Transient Softening / Preservation**: Softens harsh sibilance or preserves sharp transient punch.
-- **Formant Shift**: Transposes vocal formants independent of pitch (±12 semitones).
+- **Formant Shift**: Moves the spectral envelope (vocal formants) independent of pitch (±12 semitones).
 - **Mono Bass**: High-passes the Side channel below cutoff (20 Hz–300 Hz) to keep club sub-bass 100% pure mono.
 - **Sidechain Ducking**: Automatically ducks the swell whenever live input vocals or drum hits strike.
-- **Build Stutter**: Tempo-locked gate across the second half of the swell that accelerates 1/8 → 1/16 → 1/32 into the hit.
+- **Build Stutter**: Tempo-locked gate across the second half of the swell that accelerates 1/8 → 1/16 → 1/32 into the hit. Straight, Triplet, Dotted or a Custom 16-step pattern, plus swing.
+- **Impact & Riser Layers**: Synthesised noise riser, reverse cymbal, sub drop and impact that land exactly on the hit.
 - **Trim In / Out**: Crop the rendered result.
 - **Click Protection & Reverse Fades**: 5ms cosine windowing on grain edges and reverse turnarounds for 100% click-free playback.
 
 ### 6. Factory Presets
-- **10 Curated Starting Points**: Pop Vocal Double, EDM Riser Swarm, Future Bass Shimmer, Dubstep Chaos Impact, Intimate Whisper Build, Cinematic Choir Pad, Lo-Fi Bedroom Vocal, Ambient Drone Freeze, Aggressive Distortion Drop, and Trap Vocal Stutter.
+- **24 Curated Starting Points** with tags (Vocal, EDM, Dubstep, Pop, FX, Subtle, Extreme), from Pop Vocal Double and EDM Riser Swarm to Vowel Choir Lift, Glitch Fill, Sub Drop Impact and Scatter Storm.
+- **Preset Browser**: Search, tag filters, favourites, recent sort, INIT, prev/next, rename/delete, and shareable `.pcbank` bundles.
 - **User Presets**: Save/Load `.pcpreset` files from the preset menu (stored in `Documents\Circuit Drift Labs\PreChorus\Presets`).
-- **A/B Compare**: Swap between two sound-design snapshots (button or **B** key) and copy one to the other.
+- **A/B Compare & Morph**: Swap between two sound-design snapshots (button or **B** key), copy one to the other, or blend them with the **A/B MORPH** knob.
+- **Themed Randomize & Locks**: Subtle, Wide, Dark, Wild, Tight and Cinematic randomize themes (same seed + theme = same sound) and lock groups that randomize leaves alone.
+- **Undo / Redo**: Ctrl/Cmd+Z for sound-design edits.
+- **Performance Variations**: Four stored sounds (V1-V4) you can switch live, optionally by MIDI notes C1-D#1.
 - Presets shape the swarm, convergence, and tone-color knobs only — your loaded/captured source audio, trims, and envelope shaping are left untouched, so a preset can be auditioned on any material.
 
 ### 7. DAW Integration & Performance
@@ -87,13 +96,20 @@
 - **Transport Recovery**: Detects DAW playhead jumps, loop restarts, or scrub discontinuities, immediately clearing voice buffers to prevent clicks or stale audio artifacts.
 - **Hit on Note (PDC)**: Plug-in Delay Compensation guarantees the drop lands exactly on the MIDI note or downbeat.
 - **MIDI Triggered**: Any MIDI note-on received by the plugin fires the swarm sample-accurately (velocity-sensitive), so a DAW MIDI track can trigger the drop exactly on the beat.
-- **Keytrack**: Play the swarm chromatically from MIDI — note C4 is the original pitch.
-- **Resizable Window**: Drag the corner or pick 60–150% in OPTIONS.
+- **Target Source**: Besides MIDI, the swarm can aim itself at the **next bar line**, the host **loop end**, or start on an **input transient**.
+- **MIDI Learn**: Right-click any knob and move a CC, mod wheel, aftertouch or pitch bend. Mappings are saved with the project.
+- **Sidechain & Stems**: Optional sidechain input (drives ducking, capture and transient triggering) and Swarm / Hit / Dry stem outputs.
+- **Keytrack**: Play the swarm chromatically from MIDI — note C4 is the original pitch, and the hit stays on the beat for every note.
+- **Resizable Window**: Drag the corner or pick 60–150% in OPTIONS (60–200% by dragging).
+- **Simple view**: New instances open with just the main build controls; FULL VIEW shows everything.
+- **Swarm View**: A per-voice timeline with the convergence curve.
+- **Accessible**: Keyboard-operable knobs with focus rings, screen-reader names, high-contrast palette, reduced motion.
 - **Drag-and-Drop Loading**: Drop a WAV/AIFF/FLAC/MP3/OGG file straight onto the plugin window to load it as the source.
 - **Keyboard Workflow**: Space previews, Esc stops, R randomizes sound-design controls, G regenerates the deterministic seed, B switches A/B, and H/F1 opens help.
 - **Action Status Bar**: Loading, export, preview, preset, reset, randomize, and regeneration actions report success/state without interrupting audio.
 - **Control Tooltips**: Primary buttons, selectors, toggles, and rotary controls provide inline usage guidance.
-- **Drag-to-DAW**: Drag the "DRAG TO DAW" pad directly onto your DAW playlist as a 24-bit WAV file.
+- **Export & Drag-to-DAW**: WAV 16/24/32-bit float or FLAC, 44.1/48/96 kHz, normalise, tail trim and stems; drag the "DRAG TO DAW" pad onto your DAW playlist with the same settings.
+- **Projects keep your audio**: Captures and loaded files are stored inside the project (24-bit FLAC), so sessions move between computers.
 
 ---
 
@@ -107,11 +123,15 @@
 
 Releases are produced by `.github/workflows/release.yml` (push a `v*` tag or run it manually): it builds all formats, then packages the Inno Setup installer (`installer/PreChorus.iss`), portable zip, VST3 zip and CLAP zip into a GitHub pre-release.
 
+CI also builds the Windows installer, portable zip, VST3 and CLAP on every pull request: open the *Build Windows* workflow run and download the **PreChorus-Windows-N** artifact. Releases are published by `release.yml`.
+
 ## Build (macOS / Linux)
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure     # regression suite
 ```
+Linux needs the JUCE dependencies (`libasound2-dev libfreetype-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libgl-dev`).
 
 ## Privacy
 PreChorus makes no network connections and has no telemetry, analytics, licence or update checks. Files are only read or written when you load, export, drag out, or save/load presets.
@@ -121,6 +141,6 @@ PreChorus is currently distributed under the repository's proprietary license. S
 
 ## Specifications
 
-The product-specific source of truth is [docs/PRECHORUS_SPEC.md](docs/PRECHORUS_SPEC.md).
+The product-specific source of truth is [docs/PRECHORUS_SPEC.md](docs/PRECHORUS_SPEC.md); parameter IDs and ranges are in [docs/PARAMETERS.md](docs/PARAMETERS.md), the user guide is [docs/MANUAL.md](docs/MANUAL.md) and the latest feature audit is in [docs/feature-audit](docs/feature-audit/).
 
 This project also follows the [Circuit Drift Labs Shared Audio Plugin Standard](docs/standards/CDL_PLUGIN_BASELINE.md). The product specification supplements the shared standard and records profiles, compliance status, product-specific behavior, and planned work.

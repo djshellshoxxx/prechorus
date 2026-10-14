@@ -232,6 +232,16 @@ public:
     void applyMorph();
     bool isMorphActive() const { return morphActive; }
 
+    // ---- Performance variations: four stored sound-design snapshots (V1-V4) for live switching ----
+    static constexpr int kNumVariations = 4;
+    void storeVariation (int index);                       // message thread
+    void recallVariation (int index);                      // message thread; the previous render keeps playing until the new one is ready
+    void clearVariation (int index);
+    bool isVariationStored (int index) const { return index >= 0 && index < kNumVariations && variations[(size_t) index].isValid(); }
+    int getActiveVariation() const { return activeVariation; }
+    bool variationNotes = false;                           // when on, MIDI notes variationBaseNote..+3 select V1-V4 instead of triggering
+    int variationBaseNote = 24;                            // C1
+
     // ---- Smart capture (post-processing of finished live takes) ----
     bool smartTrimCapture = true;        // trim leading/trailing silence (-50 dBFS) with 10 ms fades, never below 50 ms
     bool smartNormaliseCapture = false;  // normalise captured takes to -1 dBFS
@@ -313,8 +323,8 @@ private:
     struct Voice { bool active = false; double pos = 0.0; double rate = 1.0; float gain = 1.0f; juce::uint32 id = 0; };
     void startVoice (float gain, double rate, int sampleOffset);
     struct StemTargets { float* swarm[2] = { nullptr, nullptr }; float* hit[2] = { nullptr, nullptr }; };
-    void renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry, float wet, float duckGain,
-                      const StemTargets* stems = nullptr);
+    void renderVoice (juce::AudioBuffer<float>& out, const RenderedSample& r, Voice& v, int num, float dry0, float dry1,
+                      float wet0, float wet1, const StemTargets* stems = nullptr);
 
     // Source Buffers
     juce::AudioFormatManager formatManager;
@@ -387,6 +397,7 @@ private:
     std::array<Voice, 16> voices;
 
     // Dry-path delay so PDC alignment keeps the dry input in sync with the reported latency
+    float dryPrev = 1.0f, wetPrev = 1.0f, duckPrev = 1.0f;   // previous block levels (gain ramps)
     juce::AudioBuffer<float> scBuffer;     // copy of the sidechain input (detector)
     juce::AudioBuffer<float> dryDelay;
     int dryDelayWrite = 0;
@@ -403,6 +414,9 @@ private:
 
     juce::ValueTree abSnapshots[2];
     bool abSlotB = false;
+    std::array<juce::ValueTree, kNumVariations> variations;
+    int activeVariation = -1;
+    std::atomic<int> pendingVariation { -1 };
     bool morphActive = false;
     double lastMorphApplyMs = 0.0;
     std::atomic<bool> morphDirty { false };
