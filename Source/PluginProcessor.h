@@ -175,12 +175,36 @@ public:
     void triggerPreview() { triggerRequest = 1; }
     bool isPreviewPlaying() const { return playhead.load() >= 0; }
     void stopAll() { stopRequest = 1; }
-    bool exportWav (const juce::File& dest);
+    bool exportWav (const juce::File& dest);       // 24-bit stereo WAV at the render rate (levels applied)
+
+    // ---- Export options (format, rate, normalise, tail trim). Persisted with the project. ----
+    struct ExportSettings
+    {
+        int format = 1;          // 0 WAV 16-bit (dithered), 1 WAV 24-bit, 2 WAV 32-bit float, 3 FLAC 24-bit
+        int rate = 0;            // 0 render rate, 1 44.1k, 2 48k, 3 96k
+        bool normalise = false;  // peak-normalise to -1 dBFS
+        bool trimTail = false;   // remove trailing silence (below -70 dBFS)
+    };
+    ExportSettings exportSettings;
+    bool exportWithSettings (const juce::File& dest, const ExportSettings& s, juce::String* error = nullptr);
+    bool exportAudio (const juce::File& dest, juce::String* error = nullptr) { return exportWithSettings (dest, exportSettings, error); }
+    static juce::String exportExtension (const ExportSettings& s) { return s.format == 3 ? "flac" : "wav"; }
+    static juce::StringArray exportFormatNames() { return { "WAV 16-bit (dither)", "WAV 24-bit", "WAV 32-bit float", "FLAC 24-bit" }; }
+    static juce::StringArray exportRateNames() { return { "Render rate", "44.1 kHz", "48 kHz", "96 kHz" }; }
     void resetEdits();
-    void randomizePreChorus();
+    void randomizePreChorus();                      // classic randomize (system RNG), honours group locks
+    // Themed randomize: same seed + theme + locks => same result. Themes: Subtle, Wide, Dark, Wild, Tight, Cinematic.
+    static juce::StringArray getRandomThemeNames();
+    void randomizeThemed (int theme);
+    // Lock groups keep their controls out of randomize. Stored with the project.
+    static juce::StringArray getLockGroupNames();
+    static int lockGroupOf (const juce::String& paramId);   // -1 when the control is never randomized
+    juce::uint32 lockedGroups = 0;
     void regenerateSeed();
     void loadFactoryPreset (int index);
     static juce::StringArray getFactoryPresetNames();
+    static const juce::StringArray& getSoundDesignIds();
+    static juce::StringArray getFactoryPresetTags (int index);   // e.g. { "Vocal", "Pop", "Subtle" }
 
     // A/B comparison (parameter snapshots only; never touches source audio or capture history)
     void switchABSlot();
@@ -191,6 +215,27 @@ public:
     static juce::File getUserPresetFolder();
     bool saveUserPreset (const juce::File& f, juce::String& error);
     bool loadUserPreset (const juce::File& f, juce::String& error);
+
+    // A<->B morph: interpolates the numeric sound-design parameters between the A and B snapshots.
+    // The morph parameter is applied from the message thread (rate-limited) because it re-renders the swarm.
+    void applyMorph();
+    bool isMorphActive() const { return morphActive; }
+
+    // ---- Smart capture (post-processing of finished live takes) ----
+    bool smartTrimCapture = true;        // trim leading/trailing silence (-50 dBFS) with 10 ms fades, never below 50 ms
+    bool smartNormaliseCapture = false;  // normalise captured takes to -1 dBFS
+    juce::String getLastCaptureSummary() const { return lastCaptureSummary; }   // message thread
+    int getLastCaptureSlot() const { return lastCaptureSlot; }
+    void retakeCapture();                // re-arms into the slot of the last take (honours the capture lock)
+
+    // ---- MIDI learn / CC mapping (message thread API; audio thread only touches atomics) ----
+    static constexpr int kNumMidiSources = 130;       // CC 0-127, channel pressure (128), pitch bend (129)
+    void startMidiLearn (const juce::String& paramId);
+    void cancelMidiLearn() { learnParamIndex.store (-1); }
+    juce::String getMidiLearnParam() const;
+    void clearMidiMapping (const juce::String& paramId);
+    int getMappedMidiSource (const juce::String& paramId) const;    // -1 when unmapped
+    static juce::String midiSourceName (int source);
 
     // Undo / redo of sound-design edits (knobs, combos, toggles, randomize, presets, A/B). Message thread only.
     // Source audio and capture slots are intentionally not undoable.
@@ -244,6 +289,10 @@ private:
     void publishRender (std::shared_ptr<RenderedSample> out);
     void render();
     void requestAsyncRender();
+    void applyMidiMappings();       // timer: drains CC values into parameters
+    void processAutoTargets (double blockPpq, double bpm, int beatsPerBar, bool playing, bool looping, double loopEnd,
+                             int numSamples, const float* trigA, const float* trigB);
+    void postProcessCapture (juce::AudioBuffer<float>& b);
     void updateUndoTracking();
     void refreshFolderList (const juce::File& f);
     static juce::String encodeAudio (const juce::AudioBuffer<float>& b, double sr);
@@ -340,6 +389,24 @@ private:
 
     juce::ValueTree abSnapshots[2];
     bool abSlotB = false;
+    bool morphActive = false;
+    double lastMorphApplyMs = 0.0;
+    std::atomic<bool> morphDirty { false };
+    juce::String lastCaptureSummary;
+    int lastCaptureSlot = 0;
+
+    // MIDI learn: sources -> parameter index into allParamIds; values are handed over via atomics
+    juce::StringArray allParamIds;
+    std::array<std::atomic<int>, kNumMidiSources> midiMap;
+    std::array<std::atomic<float>, kNumMidiSources> midiValue;
+    std::atomic<int> learnParamIndex { -1 };
+    std::atomic<int> learnedSource { -1 };
+
+    // Auto-target scheduling state (Next Bar Line / Loop End / Input Transient)
+    juce::int64 lastAutoBar = -1;
+    bool loopFiredThisPass = false;
+    int transientHoldoff = 0;
+    double lastBlockPpq = -1.0;
     juce::uint32 voiceCounter = 0;
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;

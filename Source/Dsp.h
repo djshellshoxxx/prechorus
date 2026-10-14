@@ -203,7 +203,7 @@ namespace PCDsp
     // ---- Smart capture post-processing: trim leading/trailing silence, optional normalise ----
     // Never trims below minLenSec. Returns true if the buffer was changed.
     inline bool smartTrim (juce::AudioBuffer<float>& b, double sr, float thresholdDb = -50.0f, double minLenSec = 0.05,
-                           double fadeMs = 10.0, bool normalise = false, float normaliseDb = -1.0f)
+                           double fadeMs = 10.0, bool normalise = false, float normaliseDb = -1.0f, bool trim = true)
     {
         const int n = b.getNumSamples();
         if (n <= 0) return false;
@@ -215,9 +215,12 @@ namespace PCDsp
             return false;
         };
         int first = 0, last = n - 1;
-        while (first < n && ! loud (first)) ++first;
-        if (first >= n) return false; // all silent: leave it alone
-        while (last > first && ! loud (last)) --last;
+        if (trim)
+        {
+            while (first < n && ! loud (first)) ++first;
+            if (first >= n) return false; // all silent: leave it alone
+            while (last > first && ! loud (last)) --last;
+        }
         const int minLen = (int) (sr * minLenSec);
         int len = last - first + 1;
         if (len < minLen)

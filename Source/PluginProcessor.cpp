@@ -130,6 +130,8 @@ private:
     PreChorusProcessor& owner;
 };
 
+const juce::StringArray& PreChorusProcessor::getSoundDesignIds() { return soundDesignIds(); }
+
 PreChorusProcessor::PreChorusProcessor()
     : AudioProcessor (BusesProperties()
                         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
@@ -142,6 +144,10 @@ PreChorusProcessor::PreChorusProcessor()
 
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
+    for (auto* p : getParameters())
+        allParamIds.add (static_cast<juce::AudioProcessorParameterWithID*> (p)->paramID);
+    for (auto& m : midiMap) m.store (-1);
+    for (auto& v : midiValue) v.store (-1.0f);
 
     loadedSR = 44100.0;
     loadedBuffer = makeStartupChord (loadedSR);
@@ -311,6 +317,7 @@ void PreChorusProcessor::parameterChanged (const juce::String& id, float value)
     else if (id == IDs::captureLock)
         captureLockState.store (value > 0.5f);
     if (soundDesignIds().contains (id)) undoChangeFlag.store (true);   // no allocation: may run on the audio thread
+    if (id == IDs::morph) morphDirty.store (true);
     dirty = true;
 }
 
@@ -337,26 +344,7 @@ void PreChorusProcessor::resetEdits()
 
 void PreChorusProcessor::randomizePreChorus()
 {
-    auto rnd = [] (float a, float b) { return a + (b - a) * juce::Random::getSystemRandom().nextFloat(); };
-    setParam (IDs::voiceCount, (float) juce::Random::getSystemRandom().nextInt (juce::Range<int> (6, 28)));
-    setParam (IDs::voiceDensity, rnd (-0.4f, 0.6f));
-    setParam (IDs::progReveal, rnd (0.2f, 0.8f));
-    setParam (IDs::voiceAge, rnd (0.1f, 0.6f));
-    setParam (IDs::timeSpread, rnd (0.4f, 2.5f));
-    setParam (IDs::timeConverge, rnd (0.6f, 1.0f));
-    setParam (IDs::pitchSpread, rnd (3.0f, 16.0f));
-    setParam (IDs::detune, rnd (10.0f, 35.0f));
-    setParam (IDs::pitchConverge, rnd (0.5f, 1.0f));
-    setParam (IDs::attraction, rnd (0.3f, 0.9f));
-    setParam (IDs::turbulence, rnd (0.05f, 0.4f));
-    setParam (IDs::overshoot, rnd (0.0f, 0.5f));
-    setParam (IDs::orbit, rnd (0.0f, 0.6f));
-    setParam (IDs::distance, rnd (0.2f, 0.8f));
-    setParam (IDs::air, rnd (0.1f, 0.6f));
-    setParam (IDs::drive, rnd (0.1f, 0.5f));
-    setParam (IDs::space, rnd (0.2f, 0.6f));
-    setParam (IDs::shape, rnd (-0.2f, 0.7f));
-    regenerateSeed();
+    randomizeThemed (-1);
 }
 
 void PreChorusProcessor::regenerateSeed()
@@ -368,7 +356,11 @@ juce::StringArray PreChorusProcessor::getFactoryPresetNames()
 {
     return { "Pop Vocal Double", "EDM Riser Swarm", "Future Bass Shimmer", "Dubstep Chaos Impact",
              "Intimate Whisper Build", "Cinematic Choir Pad", "Lo-Fi Bedroom Vocal",
-             "Ambient Drone Freeze", "Aggressive Distortion Drop", "Trap Vocal Stutter" };
+             "Ambient Drone Freeze", "Aggressive Distortion Drop", "Trap Vocal Stutter",
+             "Vowel Choir Lift", "Stadium Anthem Build", "Glitch Fill", "Riser & Reverse Cymbal Classic",
+             "Sub Drop Impact", "Wide Pop Chorus", "Dark Cinema Rumble", "Triplet Trap Build",
+             "Dotted Dub Build", "Tight Rap Double", "Whisper Pad Bloom", "Festival Vocal Riser",
+             "Scatter Storm", "Gentle Harmony Stack" };
 }
 
 void PreChorusProcessor::applySoundDesignDefaults()
@@ -481,7 +473,6 @@ void PreChorusProcessor::loadFactoryPreset (int index)
             setParam (IDs::postRelease, 0.0f);     setParam (IDs::distance, 0.8f);
             break;
         case 9: // Trap Vocal Stutter
-        default:
             setParam (IDs::voiceCount, 12.0f);     setParam (IDs::character, 0.0f);
             setParam (IDs::voiceDensity, 0.6f);    setParam (IDs::progReveal, 0.15f);
             setParam (IDs::timeSpread, 0.5f);      setParam (IDs::timeConverge, 1.0f);
@@ -489,6 +480,130 @@ void PreChorusProcessor::loadFactoryPreset (int index)
             setParam (IDs::panSpread, 0.5f);       setParam (IDs::focus, 0.6f);
             setParam (IDs::tilt, 0.2f);            setParam (IDs::drive, 0.3f);
             setParam (IDs::air, 0.3f);             setParam (IDs::dryReplace, 0.7f);
+            break;
+
+        case 10: // Vowel Choir Lift
+            setParam (IDs::voiceCount, 16.0f);     setParam (IDs::character, 8.0f);
+            setParam (IDs::voiceDensity, 0.25f);   setParam (IDs::progReveal, 0.5f);
+            setParam (IDs::timeSpread, 1.6f);      setParam (IDs::timeConverge, 0.85f);
+            setParam (IDs::pitchSpread, 5.0f);     setParam (IDs::detune, 14.0f);
+            setParam (IDs::scaleLock, 3.0f);       setParam (IDs::panSpread, 0.8f);
+            setParam (IDs::air, 0.4f);             setParam (IDs::presence, 0.45f);
+            setParam (IDs::space, 0.5f);           setParam (IDs::formant, 2.0f);
+            setParam (IDs::postRelease, 1.0f);
+            break;
+        case 11: // Stadium Anthem Build
+            setParam (IDs::voiceCount, 28.0f);     setParam (IDs::character, 9.0f);
+            setParam (IDs::voiceDensity, 0.45f);   setParam (IDs::timeSpread, 2.2f);
+            setParam (IDs::pitchSpread, 6.0f);     setParam (IDs::detune, 25.0f);
+            setParam (IDs::panSpread, 1.0f);       setParam (IDs::orbit, 0.2f);
+            setParam (IDs::space, 0.6f);           setParam (IDs::tilt, 0.2f);
+            setParam (IDs::air, 0.5f);             setParam (IDs::drive, 0.25f);
+            setParam (IDs::layRiser, 0.45f);       setParam (IDs::layImpact, 0.5f);
+            setParam (IDs::laySub, 0.35f);         setParam (IDs::postRelease, 1.0f);
+            break;
+        case 12: // Glitch Fill
+            setParam (IDs::voiceCount, 14.0f);     setParam (IDs::character, 10.0f);
+            setParam (IDs::voiceDensity, 0.3f);    setParam (IDs::progReveal, 0.2f);
+            setParam (IDs::timeSpread, 0.9f);      setParam (IDs::pitchSpread, 8.0f);
+            setParam (IDs::detune, 20.0f);         setParam (IDs::stutter, 0.8f);
+            setParam (IDs::drive, 0.35f);          setParam (IDs::air, 0.3f);
+            setParam (IDs::dryReplace, 0.5f);      setParam (IDs::postRelease, 0.0f);
+            break;
+        case 13: // Riser & Reverse Cymbal Classic
+            setParam (IDs::voiceCount, 20.0f);     setParam (IDs::character, 0.0f);
+            setParam (IDs::voiceDensity, 0.4f);    setParam (IDs::timeSpread, 2.4f);
+            setParam (IDs::panSpread, 0.8f);       setParam (IDs::layRiser, 0.8f);
+            setParam (IDs::layRev, 0.7f);          setParam (IDs::layImpact, 0.6f);
+            setParam (IDs::laySub, 0.5f);          setParam (IDs::space, 0.4f);
+            setParam (IDs::air, 0.5f);             setParam (IDs::tilt, 0.25f);
+            setParam (IDs::stutter, 0.4f);         setParam (IDs::postRelease, 0.0f);
+            break;
+        case 14: // Sub Drop Impact
+            setParam (IDs::voiceCount, 10.0f);     setParam (IDs::character, 1.0f);
+            setParam (IDs::timeSpread, 1.0f);      setParam (IDs::timeConverge, 1.0f);
+            setParam (IDs::laySub, 1.0f);          setParam (IDs::layImpact, 0.8f);
+            setParam (IDs::drive, 0.3f);           setParam (IDs::transients, 0.6f);
+            setParam (IDs::monoBass, 140.0f);      setParam (IDs::dryReplace, 0.8f);
+            setParam (IDs::tilt, -0.1f);           setParam (IDs::postRelease, 0.0f);
+            break;
+        case 15: // Wide Pop Chorus
+            setParam (IDs::voiceCount, 24.0f);     setParam (IDs::character, 4.0f);
+            setParam (IDs::voiceDensity, 0.2f);    setParam (IDs::panSpread, 1.0f);
+            setParam (IDs::panConverge, -0.4f);    setParam (IDs::orbit, 0.4f);
+            setParam (IDs::space, 0.55f);          setParam (IDs::presence, 0.5f);
+            setParam (IDs::air, 0.45f);            setParam (IDs::detune, 24.0f);
+            setParam (IDs::pitchSpread, 6.0f);     setParam (IDs::postRelease, 1.0f);
+            break;
+        case 16: // Dark Cinema Rumble
+            setParam (IDs::voiceCount, 30.0f);     setParam (IDs::character, 3.0f);
+            setParam (IDs::voiceAge, 0.7f);        setParam (IDs::tilt, -0.5f);
+            setParam (IDs::tone, 5000.0f);         setParam (IDs::air, 0.05f);
+            setParam (IDs::drive, 0.35f);          setParam (IDs::space, 0.7f);
+            setParam (IDs::laySub, 0.8f);          setParam (IDs::layImpact, 0.4f);
+            setParam (IDs::timeSpread, 3.0f);      setParam (IDs::monoBass, 160.0f);
+            setParam (IDs::postRelease, 1.0f);
+            break;
+        case 17: // Triplet Trap Build
+            setParam (IDs::voiceCount, 12.0f);     setParam (IDs::character, 0.0f);
+            setParam (IDs::stutter, 1.0f);         setParam (IDs::stutterGrid, 1.0f);
+            setParam (IDs::stutterSwing, 0.2f);    setParam (IDs::voiceDensity, 0.5f);
+            setParam (IDs::timeSpread, 0.7f);      setParam (IDs::pitchSpread, 3.0f);
+            setParam (IDs::dryReplace, 0.6f);      setParam (IDs::tilt, 0.15f);
+            setParam (IDs::postRelease, 0.0f);
+            break;
+        case 18: // Dotted Dub Build
+            setParam (IDs::voiceCount, 18.0f);     setParam (IDs::character, 2.0f);
+            setParam (IDs::stutter, 0.9f);         setParam (IDs::stutterGrid, 2.0f);
+            setParam (IDs::voiceDensity, 0.35f);   setParam (IDs::timeSpread, 1.4f);
+            setParam (IDs::drive, 0.4f);           setParam (IDs::tilt, -0.15f);
+            setParam (IDs::laySub, 0.5f);          setParam (IDs::transients, 0.5f);
+            setParam (IDs::postRelease, 0.0f);
+            break;
+        case 19: // Tight Rap Double
+            setParam (IDs::voiceCount, 3.0f);      setParam (IDs::character, 0.0f);
+            setParam (IDs::timeSpread, 0.25f);     setParam (IDs::timeConverge, 1.0f);
+            setParam (IDs::pitchSpread, 1.0f);     setParam (IDs::detune, 5.0f);
+            setParam (IDs::panSpread, 0.3f);       setParam (IDs::space, 0.1f);
+            setParam (IDs::drive, 0.1f);           setParam (IDs::presence, 0.4f);
+            setParam (IDs::focus, 0.5f);           setParam (IDs::postRelease, 0.0f);
+            break;
+        case 20: // Whisper Pad Bloom
+            setParam (IDs::voiceCount, 22.0f);     setParam (IDs::character, 5.0f);
+            setParam (IDs::voiceAge, 0.5f);        setParam (IDs::progReveal, 0.1f);
+            setParam (IDs::timeSpread, 2.8f);      setParam (IDs::panSpread, 0.9f);
+            setParam (IDs::space, 0.75f);          setParam (IDs::tilt, -0.1f);
+            setParam (IDs::air, 0.25f);            setParam (IDs::formant, -2.0f);
+            setParam (IDs::ducking, 0.25f);        setParam (IDs::postRelease, 1.0f);
+            break;
+        case 21: // Festival Vocal Riser
+            setParam (IDs::voiceCount, 26.0f);     setParam (IDs::character, 4.0f);
+            setParam (IDs::voiceDensity, 0.55f);   setParam (IDs::timeSpread, 2.0f);
+            setParam (IDs::pitchSpread, 12.0f);    setParam (IDs::detune, 30.0f);
+            setParam (IDs::panSpread, 0.95f);      setParam (IDs::panConverge, 1.0f);
+            setParam (IDs::layRiser, 0.6f);        setParam (IDs::layRev, 0.4f);
+            setParam (IDs::layImpact, 0.6f);       setParam (IDs::stutter, 0.5f);
+            setParam (IDs::air, 0.55f);            setParam (IDs::presence, 0.55f);
+            setParam (IDs::focus, 0.85f);          setParam (IDs::postRelease, 0.0f);
+            break;
+        case 22: // Scatter Storm
+            setParam (IDs::voiceCount, 32.0f);     setParam (IDs::character, 6.0f);
+            setParam (IDs::grainSize, 25.0f);      setParam (IDs::turbulence, 0.7f);
+            setParam (IDs::overshoot, 0.6f);       setParam (IDs::orbit, 0.8f);
+            setParam (IDs::pitchSpread, 20.0f);    setParam (IDs::detune, 40.0f);
+            setParam (IDs::voiceDensity, -0.4f);   setParam (IDs::timeSpread, 3.5f);
+            setParam (IDs::drive, 0.4f);           setParam (IDs::space, 0.5f);
+            setParam (IDs::dryReplace, 0.4f);      setParam (IDs::postRelease, 2.0f);
+            break;
+        case 23: // Gentle Harmony Stack
+            setParam (IDs::voiceCount, 6.0f);      setParam (IDs::character, 5.0f);
+            setParam (IDs::scaleLock, 1.0f);       setParam (IDs::pitchSpread, 7.0f);
+            setParam (IDs::detune, 8.0f);          setParam (IDs::timeSpread, 0.6f);
+            setParam (IDs::panSpread, 0.5f);       setParam (IDs::space, 0.25f);
+            setParam (IDs::tilt, 0.1f);            setParam (IDs::air, 0.25f);
+            setParam (IDs::presence, 0.3f);        setParam (IDs::postRelease, 0.0f);
+            break;
+        default:
             break;
     }
     regenerateSeed();
@@ -535,6 +650,12 @@ void PreChorusProcessor::timerCallback()
         }
     }
     commitFinishedCapture();
+    applyMidiMappings();
+    if (morphDirty.load() && juce::Time::getMillisecondCounterHiRes() - lastMorphApplyMs >= 120.0)
+    {
+        morphDirty.store (false);
+        applyMorph();
+    }
     updateUndoTracking();
     // Drop retired renders only once the audio thread no longer holds them.
     retiredRendered.erase (std::remove_if (retiredRendered.begin(), retiredRendered.end(),
@@ -613,6 +734,7 @@ void PreChorusProcessor::commitFinishedCapture()
         for (int ch = 0; ch < 2; ++ch)
             newBuf.copyFrom (ch, 0, captureRingBuffer, ch, 0, capturedLen);
 
+        postProcessCapture (newBuf);
         int slot = activeSlot.load();
         if (captureLockState.load() && captureSlotFilled[(size_t) slot])
         {
@@ -632,6 +754,7 @@ void PreChorusProcessor::commitFinishedCapture()
             if (slot == 0) slot0IsDefaultDemo = false;
             activeSlot.store (slot);
         }
+        lastCaptureSlot = slot;
         setParam (IDs::captureSlot, (float) slot);
         if ((int) param (IDs::sourceMode) == 1) setParam (IDs::sourceMode, 0.0f);
         dirty = true;
@@ -1399,7 +1522,8 @@ void PreChorusProcessor::publishRender (std::shared_ptr<RenderedSample> out)
         if (rendered != nullptr) retiredRendered.push_back (rendered);
         rendered = out;
     }
-    const int newLatency = param (IDs::align) > 0.5f ? latency : 0;
+    // Auto target sources schedule the swarm ahead of the bar/loop line themselves, so they never report latency.
+    const int newLatency = (param (IDs::align) > 0.5f && (int) param (IDs::tgtSource) == 0) ? latency : 0;
     reportedLatency.store (newLatency);
     if (newLatency != getLatencySamples()) setLatencySamples (newLatency);
 }
@@ -1445,6 +1569,9 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     float conf = 1.0f;
     double blockPpq = -1.0, bpmNow = hostBpm.load();
     int beatsPerBar = 4;
+    bool hostPlaying = false, hostLooping = false;
+    double loopEndPpq = 0.0;
+    const int targetMode = (int) param (IDs::tgtSource);
     if (auto* ph = getPlayHead())
     {
         if (auto pos = ph->getPosition())
@@ -1464,14 +1591,22 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
             if (pos->getTimeSignature()) beatsPerBar = juce::jmax (1, pos->getTimeSignature()->numerator);
             if (pos->getPpqPosition()) blockPpq = *pos->getPpqPosition();
+            hostPlaying = pos->getIsPlaying();
+            hostLooping = pos->getIsLooping();
+            if (hostLooping) if (auto lp = pos->getLoopPoints()) loopEndPpq = lp->ppqEnd;
 
             if (pos->getTimeInSamples())
             {
                 const juce::int64 curSample = *pos->getTimeInSamples();
                 if (pos->getIsPlaying() && lastPlayheadSample >= 0 && std::abs (curSample - lastPlayheadSample) > 2048)
                 {
-                    for (auto& v : voices) v.active = false;
-                    playhead.store (-1);
+                    lastAutoBar = -1;
+                    // a loop wrap in Loop End mode must not cut the impact tail that is still ringing
+                    if (targetMode != 2)
+                    {
+                        for (auto& v : voices) v.active = false;
+                        playhead.store (-1);
+                    }
                 }
                 lastPlayheadSample = curSample + numSamples;
             }
@@ -1573,6 +1708,16 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     }
     if (triggerRequest.exchange (0)) startVoice (1.0f, 1.0, 0);
 
+    // Auto target sources (Next Bar Line / Loop End / Input Transient) schedule the swarm themselves
+    if (targetMode != 0)
+        processAutoTargets (blockPpq, bpmNow, beatsPerBar, hostPlaying, hostLooping, loopEndPpq, numSamples,
+                            buffer.getReadPointer (0), buffer.getReadPointer (juce::jmin (1, numOut - 1)));
+    else
+    {
+        lastAutoBar = -1;
+        loopFiredThisPass = false;
+    }
+
     // MIDI: any note-on fires the swarm at its sample offset (velocity -> gain, optional keytrack)
     const int seqMode = (int) param (IDs::sequence);
     const bool keytrack = param (IDs::keytrack) > 0.5f;
@@ -1597,6 +1742,23 @@ void PreChorusProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             if (allowTrigger) startVoice (m.getFloatVelocity(), rate, meta.samplePosition);
         }
         else if (m.isAllNotesOff() || m.isAllSoundOff()) for (auto& v : voices) v.active = false;
+        else if (m.isController() || m.isChannelPressure() || m.isPitchWheel())
+        {
+            // MIDI learn / CC mapping: hand values to the message thread through atomics (no allocation here)
+            const int src = m.isController() ? m.getControllerNumber() : (m.isChannelPressure() ? 128 : 129);
+            const float v01 = m.isController() ? (float) m.getControllerValue() / 127.0f
+                            : m.isChannelPressure() ? (float) m.getChannelPressureValue() / 127.0f
+                            : (float) m.getPitchWheelValue() / 16383.0f;
+            const bool mappable = (src >= 1 && src < 120) || src >= 128;
+            const int learn = learnParamIndex.load();
+            if (learn >= 0 && mappable)
+            {
+                midiMap[(size_t) src].store (learn);
+                learnedSource.store (src);
+                learnParamIndex.store (-1);
+            }
+            if (mappable && midiMap[(size_t) src].load() >= 0) midiValue[(size_t) src].store (v01);
+        }
     }
 
     const float dryLvl = dryParam != nullptr ? dryParam->load() : 1.0f;
@@ -1683,6 +1845,7 @@ void PreChorusProcessor::startVoice (float gain, double rate, int sampleOffset)
 
         best->active = true;
         best->pos = -(double) (juce::jmax (0, sampleOffset) + juce::jmax (0, extraDelay)) * r + skip; // negative = starts later in this block
+        if (sampleOffset < 0) best->pos += (double) (-sampleOffset) * r;   // auto-target: begin partway through so the hit still lands on time
         best->rate = r;
         best->gain = gain;
         best->id = ++voiceCounter;
@@ -1791,28 +1954,8 @@ void PreChorusProcessor::prevSample()
 
 bool PreChorusProcessor::exportWav (const juce::File& dest)
 {
-    if (dirty.exchange (false) || renderRequested.load() || renderInFlight.load()) render();   // never export a stale render
-    auto r = getRendered();
-    if (r == nullptr || r->audio.getNumSamples() == 0) return false;
-    const int n = r->audio.getNumSamples();
-    const int hitAt = r->hitIndex >= 0 ? r->hitIndex : n;
-    juce::AudioBuffer<float> mix;
-    mix.makeCopyOf (r->audio);
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        mix.applyGain (ch, 0, hitAt, wetParam->load());
-        mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
-    }
-    if (! dest.getParentDirectory().createDirectory()) return false;
-    dest.deleteFile();
-    std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
-    if (os == nullptr || ! os->openedOk()) return false;
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), r->sampleRate, 2, 24, {}, 0));
-    if (w == nullptr) return false;
-    os.release();
-    w->writeFromAudioSampleBuffer (mix, 0, n);
-    return true;
+    ExportSettings s;   // 24-bit WAV at the render rate
+    return exportWithSettings (dest, s, nullptr);
 }
 
 // ---------------- Embedded audio (project portability) ----------------
@@ -1937,6 +2080,27 @@ void PreChorusProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("simpleView", simpleView, nullptr);
     state.setProperty ("embedAudio", embedAudio, nullptr);
     state.setProperty ("maxSourceSec", maxSourceSec.load(), nullptr);
+    state.setProperty ("exportFormat", exportSettings.format, nullptr);
+    state.setProperty ("exportRate", exportSettings.rate, nullptr);
+    state.setProperty ("exportNormalise", exportSettings.normalise, nullptr);
+    state.setProperty ("exportTrimTail", exportSettings.trimTail, nullptr);
+    state.setProperty ("smartTrim", smartTrimCapture, nullptr);
+    state.setProperty ("smartNormalise", smartNormaliseCapture, nullptr);
+    state.setProperty ("lockedGroups", (int) lockedGroups, nullptr);
+    state.removeChild (state.getChildWithName ("MIDIMAP"), nullptr);
+    {
+        juce::ValueTree map ("MIDIMAP");
+        for (int s = 0; s < kNumMidiSources; ++s)
+        {
+            const int idx = midiMap[(size_t) s].load();
+            if (idx < 0 || idx >= allParamIds.size()) continue;
+            juce::ValueTree e ("MAP");
+            e.setProperty ("src", s, nullptr);
+            e.setProperty ("id", allParamIds[idx], nullptr);
+            map.appendChild (e, nullptr);
+        }
+        if (map.getNumChildren() > 0) state.appendChild (map, nullptr);
+    }
     if (uiWidth > 0) { state.setProperty ("uiWidth", uiWidth, nullptr); state.setProperty ("uiHeight", uiHeight, nullptr); }
 
     int skipped = 0;
@@ -1986,8 +2150,25 @@ void PreChorusProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto embed = state.getChildWithName ("EMBED");
     state.removeChild (embed, nullptr);   // keep the (large) audio out of the live parameter tree
+    auto midiMapTree = state.getChildWithName ("MIDIMAP");
+    state.removeChild (midiMapTree, nullptr);
     apvts.replaceState (state);
 
+    exportSettings.format = juce::jlimit (0, 3, (int) state.getProperty ("exportFormat", 1));
+    exportSettings.rate = juce::jlimit (0, 3, (int) state.getProperty ("exportRate", 0));
+    exportSettings.normalise = (bool) state.getProperty ("exportNormalise", false);
+    exportSettings.trimTail = (bool) state.getProperty ("exportTrimTail", false);
+    smartTrimCapture = (bool) state.getProperty ("smartTrim", true);
+    smartNormaliseCapture = (bool) state.getProperty ("smartNormalise", false);
+    lockedGroups = (juce::uint32) juce::jlimit (0, 63, (int) state.getProperty ("lockedGroups", 0));
+    for (auto& m : midiMap) m.store (-1);
+    for (auto e : midiMapTree)
+    {
+        const int src = (int) e.getProperty ("src", -1);
+        const int idx = allParamIds.indexOf (e.getProperty ("id", "").toString());
+        if (src >= 0 && src < kNumMidiSources && idx >= 0) midiMap[(size_t) src].store (idx);
+    }
+    morphActive = false;
     simpleView = (bool) state.getProperty ("simpleView", false);   // projects from v0.0.1 keep the full view
     embedAudio = (bool) state.getProperty ("embedAudio", true);
     setMaxSourceSeconds ((int) state.getProperty ("maxSourceSec", 12));   // projects from v0.0.1 keep their 12 s limit
@@ -2178,6 +2359,7 @@ void PreChorusProcessor::applySoundDesignSnapshot (const juce::ValueTree& t)
 
 void PreChorusProcessor::switchABSlot()
 {
+    morphActive = false;
     abSnapshots[abSlotB ? 1 : 0] = soundDesignSnapshot();
     abSlotB = ! abSlotB;
     auto& target = abSnapshots[abSlotB ? 1 : 0];
@@ -2187,6 +2369,7 @@ void PreChorusProcessor::switchABSlot()
 
 void PreChorusProcessor::copyCurrentToOtherAB()
 {
+    morphActive = false;
     abSnapshots[abSlotB ? 0 : 1] = soundDesignSnapshot();
 }
 

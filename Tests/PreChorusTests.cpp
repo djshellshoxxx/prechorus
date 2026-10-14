@@ -962,6 +962,251 @@ public:
             expect (r != nullptr && r->audio.getNumSamples() > 1000);
             expect (std::isfinite (r->audio.getMagnitude (0, r->audio.getNumSamples())));
         }
+
+        beginTest ("themed randomize is deterministic, honours lock groups and stays renderable");
+        {
+            PreChorusProcessor a, b;
+            a.prepareToPlay (44100.0, 512); b.prepareToPlay (44100.0, 512);
+            a.asyncRender = false; b.asyncRender = false;
+            for (int theme = 0; theme < 6; ++theme)
+            {
+                a.setParam (IDs::seed, 777.0f); b.setParam (IDs::seed, 777.0f);
+                a.randomizeThemed (theme); b.randomizeThemed (theme);
+                bool same = true;
+                for (auto& id : PreChorusProcessor::getSoundDesignIds()) same = same && juce::exactlyEqual (a.param (id), b.param (id));
+                expect (same);
+                a.render();
+                auto r = a.getRendered();
+                expect (r != nullptr && std::isfinite (r->audio.getMagnitude (0, r->audio.getNumSamples())));
+            }
+            a.setParam (IDs::seed, 31.0f); a.setParam (IDs::voiceCount, 12.0f); a.setParam (IDs::tilt, 0.0f);
+            a.lockedGroups = (1u << 0);     // Swarm locked
+            const float vc = a.param (IDs::voiceCount), seed = a.param (IDs::seed);
+            a.randomizeThemed (3);
+            expectEquals (a.param (IDs::voiceCount), vc);
+            expectEquals (a.param (IDs::seed), seed);
+            expect (a.param (IDs::turbulence) >= 0.3f);                 // unlocked groups still change
+            a.lockedGroups = (1u << 3);     // Tone locked
+            a.setParam (IDs::tilt, 0.37f);
+            a.randomizeThemed (2);
+            expectWithinAbsoluteError (a.param (IDs::tilt), 0.37f, 0.011f);
+            a.lockedGroups = 0;
+            expect (PreChorusProcessor::lockGroupOf (IDs::sourceMode) == -1);   // source controls are never randomized
+        }
+
+        beginTest ("A/B morph interpolates numeric parameters and steps choices at the midpoint");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.setParam (IDs::detune, 10.0f); p.setParam (IDs::character, 1.0f); p.setParam (IDs::space, 0.2f);
+            p.switchABSlot();                                  // A stored, B starts as a copy
+            p.setParam (IDs::detune, 30.0f); p.setParam (IDs::character, 4.0f); p.setParam (IDs::space, 0.6f);
+            p.setParam (IDs::morph, 0.0f);
+            p.applyMorph();
+            expectWithinAbsoluteError (p.param (IDs::detune), 10.0f, 0.51f);
+            expectEquals ((int) p.param (IDs::character), 1);
+            p.setParam (IDs::morph, 1.0f); p.applyMorph();
+            expectWithinAbsoluteError (p.param (IDs::detune), 30.0f, 0.51f);
+            expectEquals ((int) p.param (IDs::character), 4);
+            p.setParam (IDs::morph, 0.5f); p.applyMorph();
+            expectWithinAbsoluteError (p.param (IDs::detune), 20.0f, 0.51f);
+            expectWithinAbsoluteError (p.param (IDs::space), 0.4f, 0.011f);
+            p.setParam (IDs::morph, 0.25f); p.applyMorph();
+            expectEquals ((int) p.param (IDs::character), 1);
+        }
+
+        beginTest ("smart capture trims silence, honours the lock and offers a retake");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (48000.0, 512);
+            p.setParam (IDs::captureMode, 0.0f); p.setParam (IDs::thresh, -30.0f);
+            p.selectCaptureSlot (2);
+            p.armCapture();
+            auto feed = [&] (int blocks, float amp)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    juce::AudioBuffer<float> buf (2, 512);
+                    for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, amp * std::sin (0.07f * (float) (i + b * 512)));
+                    juce::MidiBuffer m; p.processBlock (buf, m);
+                }
+            };
+            feed (10, 0.0f);          // silence: stays armed
+            expect (p.isCaptureArmed());
+            feed (30, 0.4f);          // ~0.32 s of tone
+            feed (80, 0.0f);          // trailing silence ends the take
+            p.commitFinishedCapture();
+            expect (p.isSlotFilled (2));
+            expectEquals (p.getLastCaptureSlot(), 2);
+            expect (p.getLastCaptureSummary().contains ("Captured"));
+            {
+                const juce::ScopedLock sl (p.sourceLock);
+                const double secs = p.captureSlots[2].getNumSamples() / 48000.0;
+                expect (secs > 0.25 && secs < 0.5);                       // trailing silence trimmed away
+            }
+            p.setCaptureLock (true);
+            p.armCapture(); feed (30, 0.4f); feed (80, 0.0f); p.commitFinishedCapture();
+            expect (p.getActiveCaptureSlot() != 2);                       // locked take was not overwritten
+            p.setCaptureLock (false);
+            p.retakeCapture();
+            expect (p.getActiveCaptureSlot() == p.getLastCaptureSlot() || p.isCaptureArmed());
+        }
+
+        beginTest ("export options write the chosen format, rate and level");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.asyncRender = false;
+            p.setParam (IDs::sync, 0.0f); p.setParam (IDs::tail, 1.0f);
+            p.render();
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("prechorus_export_test");
+            dir.deleteRecursively(); dir.createDirectory();
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            auto inspect = [&] (const juce::File& f, int& bits, double& rate, juce::int64& len, bool& isFloat)
+            {
+                std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (f));
+                if (rd == nullptr) return false;
+                bits = (int) rd->bitsPerSample; rate = rd->sampleRate; len = rd->lengthInSamples; isFloat = rd->usesFloatingPointData;
+                return rd->numChannels == 2;
+            };
+            int bits; double rate; juce::int64 len; bool isFloat;
+            PreChorusProcessor::ExportSettings s;
+            for (int fmt = 0; fmt < 4; ++fmt)
+            {
+                s.format = fmt; s.rate = 0;
+                auto f = dir.getChildFile ("t" + juce::String (fmt) + "." + PreChorusProcessor::exportExtension (s));
+                juce::String err;
+                expect (p.exportWithSettings (f, s, &err));
+                expect (inspect (f, bits, rate, len, isFloat));
+                expectEquals (bits, fmt == 0 ? 16 : fmt == 2 ? 32 : 24);
+                expect (isFloat == (fmt == 2));
+                expectWithinAbsoluteError (rate, 44100.0, 0.5);
+            }
+            s.format = 1; s.rate = 2;                     // 48 kHz
+            auto f48 = dir.getChildFile ("t48.wav");
+            expect (p.exportWithSettings (f48, s));
+            expect (inspect (f48, bits, rate, len, isFloat));
+            expectWithinAbsoluteError (rate, 48000.0, 0.5);
+            expectWithinAbsoluteError ((double) len / 48000.0, (double) p.getRendered()->audio.getNumSamples() / 44100.0, 0.01);
+            s.rate = 0; s.normalise = true; s.trimTail = true;
+            auto fn = dir.getChildFile ("tn.wav");
+            expect (p.exportWithSettings (fn, s));
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (fn));
+            juce::AudioBuffer<float> got (2, (int) rd->lengthInSamples);
+            rd->read (&got, 0, (int) rd->lengthInSamples, 0, true, true);
+            expectWithinAbsoluteError ((double) got.getMagnitude (0, got.getNumSamples()), (double) juce::Decibels::decibelsToGain (-1.0f), 0.01);
+            expect (rd->lengthInSamples <= p.getRendered()->audio.getNumSamples());
+            expect (p.exportWav (dir.getChildFile ("legacy.wav")));
+            // settings survive a project save/restore
+            p.exportSettings.format = 3; p.exportSettings.rate = 3; p.exportSettings.normalise = true;
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            PreChorusProcessor q; q.setStateInformation (blob.getData(), (int) blob.getSize());
+            expectEquals (q.exportSettings.format, 3); expectEquals (q.exportSettings.rate, 3); expect (q.exportSettings.normalise);
+            dir.deleteRecursively();
+        }
+
+        beginTest ("MIDI learn maps a CC to a parameter, applies it on the message thread and persists");
+        {
+            PreChorusProcessor p;
+            p.prepareToPlay (44100.0, 512);
+            p.setParam (IDs::macro, 0.1f);
+            p.startMidiLearn (IDs::macro);
+            expect (p.getMidiLearnParam() == IDs::macro);
+            auto sendCC = [&] (int cc, int val)
+            {
+                juce::AudioBuffer<float> buf (2, 256); buf.clear();
+                juce::MidiBuffer m; m.addEvent (juce::MidiMessage::controllerEvent (1, cc, val), 5);
+                p.processBlock (buf, m);
+            };
+            sendCC (20, 64);
+            expectEquals (p.getMappedMidiSource (IDs::macro), 20);
+            p.applyMidiMappings();
+            expectWithinAbsoluteError (p.param (IDs::macro), 64.0f / 127.0f, 0.01f);
+            sendCC (20, 127); p.applyMidiMappings();
+            expectWithinAbsoluteError (p.param (IDs::macro), 1.0f, 0.01f);
+            sendCC (21, 10); p.applyMidiMappings();                         // unmapped CC does nothing
+            expectWithinAbsoluteError (p.param (IDs::macro), 1.0f, 0.01f);
+            p.startMidiLearn (IDs::macro); sendCC (30, 0); p.applyMidiMappings();
+            expectEquals (p.getMappedMidiSource (IDs::macro), 30);          // newest source wins, old one released
+            expectEquals (p.getMappedMidiSource (IDs::space), -1);
+            juce::MemoryBlock blob; p.getStateInformation (blob);
+            PreChorusProcessor q; q.setStateInformation (blob.getData(), (int) blob.getSize());
+            expectEquals (q.getMappedMidiSource (IDs::macro), 30);
+            q.clearMidiMapping (IDs::macro);
+            expectEquals (q.getMappedMidiSource (IDs::macro), -1);
+            expect (PreChorusProcessor::midiSourceName (1) == "CC 1");
+        }
+
+        beginTest ("auto targets: next bar line, loop end and input transient land the hit exactly");
+        {
+            struct Host : juce::AudioPlayHead
+            {
+                double ppq = 0, bpm = 120; bool playing = true, looping = false; double loopStart = 0, loopEnd = 0; juce::int64 sample = 0;
+                juce::Optional<PositionInfo> getPosition() const override
+                {
+                    PositionInfo i; i.setBpm (bpm); i.setPpqPosition (ppq); i.setIsPlaying (playing); i.setTimeInSamples (sample);
+                    i.setTimeSignature (TimeSignature { 4, 4 }); i.setIsLooping (looping);
+                    if (looping) i.setLoopPoints (LoopPoints { loopStart, loopEnd });
+                    return i;
+                }
+            } host;
+            const double sr = 44100.0; const int bs = 512;
+            PreChorusProcessor p;
+            p.prepareToPlay (sr, bs);
+            p.setPlayHead (&host);
+            p.asyncRender = false;
+            p.setParam (IDs::sync, 0.0f); p.setParam (IDs::tail, 1.0f); p.setParam (IDs::tgtSource, 1.0f);
+            p.render();
+            const int hit = p.getRendered()->hitIndex;
+            expect (hit > 10000);
+            expectEquals (p.reportedLatency.load(), 0);             // auto modes schedule themselves, no PDC latency
+            const double spp = sr * 60.0 / host.bpm;
+            const double barSamples = 4.0 * spp;
+            juce::int64 firstStartAbs = -1;
+            bool foundStart = false;
+            for (int blk = 0; blk < 200 && ! foundStart; ++blk)
+            {
+                host.sample = (juce::int64) blk * bs; host.ppq = (double) host.sample / spp;
+                juce::AudioBuffer<float> buf (2, bs); buf.clear(); juce::MidiBuffer m;
+                p.processBlock (buf, m);
+                for (auto& v : p.voices)
+                    if (v.active) { firstStartAbs = host.sample + (juce::int64) std::llround ((double) bs - v.pos); foundStart = true; break; }
+            }
+            // the first bar line after the transport start is bar 1 (bar 0 is already behind us at sample 0 -> partial start)
+            expect (foundStart);
+            const double hitAbs = (double) firstStartAbs + hit;
+            const double nearestBar = std::round (hitAbs / barSamples) * barSamples;
+            expectWithinAbsoluteError (hitAbs, nearestBar, 2.0);
+
+            // loop end
+            for (auto& v : p.voices) v.active = false;
+            p.setParam (IDs::tgtSource, 2.0f);
+            host.looping = true; host.loopStart = 0.0; host.loopEnd = 8.0;       // 2 bars
+            juce::int64 startAbs = -1; bool foundLoop = false;
+            for (int blk = 0; blk < 400 && ! foundLoop; ++blk)
+            {
+                host.sample = (juce::int64) blk * bs; host.ppq = (double) host.sample / spp;
+                if (host.ppq >= host.loopEnd) break;
+                juce::AudioBuffer<float> buf (2, bs); buf.clear(); juce::MidiBuffer m;
+                p.processBlock (buf, m);
+                for (auto& v : p.voices) if (v.active) { startAbs = host.sample + (juce::int64) std::llround ((double) bs - v.pos); foundLoop = true; break; }
+            }
+            expect (foundLoop);
+            expectWithinAbsoluteError ((double) startAbs + hit, host.loopEnd * spp, 2.0);
+
+            // input transient
+            for (auto& v : p.voices) v.active = false;
+            p.setParam (IDs::tgtSource, 3.0f); p.setParam (IDs::tgtThresh, -20.0f);
+            host.playing = false; host.looping = false;
+            { juce::AudioBuffer<float> quiet (2, bs); quiet.clear(); juce::MidiBuffer m; p.processBlock (quiet, m); }
+            for (auto& v : p.voices) expect (! v.active);
+            juce::AudioBuffer<float> click (2, bs); click.clear();
+            click.setSample (0, 100, 0.8f); click.setSample (1, 100, 0.8f);
+            juce::MidiBuffer m2; p.processBlock (click, m2);
+            bool started = false;
+            for (auto& v : p.voices) if (v.active) { started = true; expectWithinAbsoluteError (v.pos, (double) (bs - 100), 1.5); }
+            expect (started);
+        }
     }
 };
 
