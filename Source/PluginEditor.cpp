@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 #include "PluginEditor.h"
+#include "DemoSource.h"
 
 namespace PCColours
 {
@@ -127,7 +128,7 @@ juce::Label* PCLookAndFeel::createSliderTextBox (juce::Slider& s)
     return l;
 }
 
-void PCLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox& b)
+void PCLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool isDown, int, int, int, int, juce::ComboBox&)
 {
     auto r = juce::Rectangle<int> (0, 0, w, h).toFloat().reduced (0.5f);
     g.setColour (isDown ? PCColours::panel2.brighter (0.1f) : PCColours::panel2);
@@ -348,7 +349,8 @@ void WaveformDisplay::timerCallback()
     const float v1 = proc.param (IDs::volEnd);
     const float vt = proc.param (IDs::volTension);
 
-    if (ph != lastPlayhead || t != lastTone || b != lastBass || v0 != lastV0 || v1 != lastV1 || vt != lastVT)
+    if (ph != lastPlayhead || ! juce::exactlyEqual (t, lastTone) || ! juce::exactlyEqual (b, lastBass) || ! juce::exactlyEqual (v0, lastV0)
+        || ! juce::exactlyEqual (v1, lastV1) || ! juce::exactlyEqual (vt, lastVT))
     {
         lastPlayhead = ph; lastTone = t; lastBass = b;
         lastV0 = v0; lastV1 = v1; lastVT = vt;
@@ -563,6 +565,7 @@ HelpOverlay::HelpOverlay()
         "A finished capture switches Loaded Sample back to Live Capture so the new take is audible.\n\n"
         "KEYBOARD SHORTCUTS:\n"
         "- Space: preview the current swarm.   - Esc: stop preview (or close this help).\n"
+        "- Ctrl/Cmd+Z: undo.   - Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo (sound-design edits only).\n"
         "- R: randomize sound-design parameters.   - G: regenerate the deterministic swarm seed.\n"
         "- H / F1: open this help panel.   - B: switch A/B comparison slot.\n\n"
         "PRESETS: The preset menu holds 10 factory presets (Pop Vocal Double, EDM Riser Swarm, Future Bass "
@@ -681,6 +684,16 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     addAndMakeVisible (helpButton);
     addAndMakeVisible (abButton);
     addAndMakeVisible (abCopyButton);
+    addAndMakeVisible (viewButton);
+    viewButton.setButtonText (proc.simpleView ? "FULL VIEW" : "SIMPLE VIEW");
+    viewButton.onClick = [this] {
+        proc.simpleView = ! proc.simpleView;
+        viewButton.setButtonText (proc.simpleView ? "FULL VIEW" : "SIMPLE VIEW");
+        resized();
+        repaint();
+        setStatus (proc.simpleView ? "Simple view: the main build controls. Click FULL VIEW for every control."
+                                   : "Full view: every control.");
+    };
     abButton.onClick = [this] {
         proc.switchABSlot();
         setStatus (juce::String ("A/B: now editing ") + (proc.isSlotBActive() ? "B." : "A."));
@@ -711,7 +724,11 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
                 {
                     const bool ok = proc.loadSampleFile (f, true);
                     waveform.rebuild();
-                    setStatus (ok ? "Loaded: " + f.getFileName() : "Could not load selected audio file.");
+                    const bool cropped = ok && proc.getLastLoadFileSeconds() > proc.getLastLoadUsedSeconds();
+                    setStatus (! ok ? "Could not load selected audio file."
+                                    : cropped ? "Loaded: " + f.getFileName() + " (cropped to " + juce::String (proc.getLastLoadUsedSeconds())
+                                                  + " s of " + juce::String (proc.getLastLoadFileSeconds()) + " s - raise Max source length in OPTIONS)"
+                                              : "Loaded: " + f.getFileName());
                 }
             });
     };
@@ -1009,6 +1026,7 @@ PreChorusEditor::PreChorusEditor (PreChorusProcessor& p)
     alignToggle.setTooltip ("Reports the swell length as latency and delays the dry input to match, so the target hit lands exactly on the MIDI note.");
     keytrackToggle.setTooltip ("MIDI notes transpose the swarm (C4 = original pitch) so it can be played like an instrument.");
     abButton.setTooltip ("Switch between two sound-design snapshots (A/B compare). Shortcut: B.");
+    viewButton.setTooltip ("Switch between the SIMPLE view (the main build controls) and the FULL view (every control). Your settings are never changed by switching.");
     abCopyButton.setTooltip ("Copy the current A/B slot's settings into the other slot.");
     pitchTension.setTooltip ("Pitch sweep curve: drag up/down to bend, double-click to reset to linear.");
     waveform.setTooltip ("Rendered result (swarm + amber target hit). Drag the white volume points; click elsewhere to preview.");
@@ -1165,6 +1183,21 @@ void PreChorusEditor::showOptionsMenu()
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
     menu.addItem (2, "Reduced motion", true, reducedMotionToggle.getToggleState());
+    menu.addSectionHeader ("Edit");
+    menu.addItem (10, "Undo  (Ctrl/Cmd+Z)", proc.canUndo());
+    menu.addItem (11, "Redo  (Ctrl/Cmd+Shift+Z)", proc.canRedo());
+    menu.addSectionHeader ("Source");
+    juce::PopupMenu demos;
+    const auto demoNames = PCDemo::names();
+    for (int i = 0; i < demoNames.size(); ++i) demos.addItem (2000 + i, demoNames[i]);
+    menu.addSubMenu ("Load demo source", demos);
+    juce::PopupMenu lengths;
+    for (int sec : { 12, 30, 60, 120 })
+        lengths.addItem (3000 + sec, juce::String (sec) + " seconds", true, proc.getMaxSourceSeconds() == sec);
+    menu.addSubMenu ("Max source length", lengths);
+    menu.addItem (3, "Store audio inside project", true, proc.embedAudio);
+    menu.addSectionHeader ("Support");
+    menu.addItem (4, "Copy diagnostics to clipboard");
     juce::PopupMenu sizes;
     for (int pct : { 60, 75, 85, 100, 125, 150 })
         sizes.addItem (1000 + pct, juce::String (pct) + "%", true, std::abs (getWidth() - kBaseW * pct / 100) < 4);
@@ -1181,6 +1214,31 @@ void PreChorusEditor::showOptionsMenu()
                             else if (result == 2)
                             {
                                 reducedMotionToggle.setToggleState (! reducedMotionToggle.getToggleState(), juce::sendNotification);
+                            }
+                            else if (result == 10 || result == 11)
+                            {
+                                doUndoRedo (result == 11);
+                            }
+                            else if (result == 3)
+                            {
+                                proc.embedAudio = ! proc.embedAudio;
+                                setStatus (proc.embedAudio ? "Source audio will be stored inside the project." : "Source audio will be referenced by file path only.");
+                            }
+                            else if (result == 4)
+                            {
+                                juce::SystemClipboard::copyTextToClipboard (proc.getDiagnosticsReport());
+                                setStatus ("Diagnostics copied. Paste them into your bug report.");
+                            }
+                            else if (result >= 3000 && result <= 3120)
+                            {
+                                proc.setMaxSourceSeconds (result - 3000);
+                                setStatus ("Max source length: " + juce::String (proc.getMaxSourceSeconds()) + " s (live capture buffer resized; applies to the next file load).");
+                            }
+                            else if (result >= 2000 && result < 2000 + PCDemo::numKinds)
+                            {
+                                proc.loadDemoSource (result - 2000);
+                                waveform.rebuild();
+                                setStatus ("Loaded demo source: " + PCDemo::names()[result - 2000]);
                             }
                             else if (result > 1000)
                             {
@@ -1316,6 +1374,8 @@ void PreChorusEditor::resized()
     lockButton.setBounds (capStrip.removeFromLeft (48));
 
     confidenceLabel.setBounds (capStrip.removeFromRight (170));
+    capStrip.removeFromRight (6);
+    viewButton.setBounds (capStrip.removeFromRight (86));
 
     area.removeFromTop (3);
     auto statusRow = area.removeFromTop (18);
@@ -1351,6 +1411,7 @@ void PreChorusEditor::resized()
 
     // 5. Knob Panels (Rows A & B)
     area.removeFromTop (8);
+    const auto knobArea = area;
     const int rowH = (area.getHeight() - 8) / 2;
     auto rowA = area.removeFromTop (rowH);
     area.removeFromTop (8);
@@ -1404,6 +1465,25 @@ void PreChorusEditor::resized()
         layoutKnobs (pitchArea, { kPitch, kVolStart, kVolEnd, kVolTension, kTrimStart, kTrimEnd });
     }
 
+    // Simple view: only the main build controls, laid out large. (Pure layout switch: no parameters change.)
+    const bool simple = proc.simpleView;
+    const std::initializer_list<Knob*> simpleKnobs { kMacro, kVoiceCount, kTail, kPanSpread, kTilt, kSpace, kWet };
+    for (auto& k : knobs)
+    {
+        const bool show = ! simple || std::find (simpleKnobs.begin(), simpleKnobs.end(), k.get()) != simpleKnobs.end();
+        k->slider.setVisible (show);
+        k->label.setVisible (show);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &dirCombo, &scaleCombo, &postReleaseCombo, &rangeCombo, &rangeLabel, &pitchTension })
+        c->setVisible (! simple);
+    if (simple)
+    {
+        groups.clear();
+        groups.push_back ({ "ONE-KNOB BUILD   (FULL VIEW shows every control)", knobArea });
+        auto simpleRow = knobArea.reduced (30, 22).withTrimmedTop (14);
+        layoutKnobs (simpleRow.withSizeKeepingCentre (simpleRow.getWidth(), juce::jmin (simpleRow.getHeight(), 250)), simpleKnobs);
+    }
+
     const auto t = juce::AffineTransform::scale (scale);
     for (auto* c : getChildren())
         if (c != resizableCorner.get() && dynamic_cast<juce::TooltipWindow*> (c) == nullptr)
@@ -1432,9 +1512,18 @@ void PreChorusEditor::filesDropped (const juce::StringArray& files, int, int)
     setStatus ("Dropped file could not be loaded.");
 }
 
+void PreChorusEditor::doUndoRedo (bool redo)
+{
+    if (redo ? ! proc.canRedo() : ! proc.canUndo()) { setStatus (redo ? "Nothing to redo." : "Nothing to undo."); return; }
+    if (redo) proc.redo(); else proc.undo();
+    waveform.rebuild();
+    setStatus (redo ? "Redo." : "Undo.");
+}
+
 void PreChorusEditor::setStatus (const juce::String& text)
 {
     statusLabel.setText (text, juce::dontSendNotification);
+    proc.logStatus (text);
 }
 
 bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
@@ -1456,6 +1545,15 @@ bool PreChorusEditor::keyPressed (const juce::KeyPress& key)
         proc.stopAll();
         setStatus ("Preview stopped.");
         return true;
+    }
+
+    // Undo / redo: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
+    if (key.getModifiers().isCommandDown())
+    {
+        const int code = key.getKeyCode();
+        const bool shift = key.getModifiers().isShiftDown();
+        if ((code == 'Z' || code == 'z') && ! shift) { doUndoRedo (false); return true; }
+        if (((code == 'Z' || code == 'z') && shift) || code == 'Y' || code == 'y') { doUndoRedo (true); return true; }
     }
 
     const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
