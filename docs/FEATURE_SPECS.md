@@ -1,6 +1,29 @@
 # PreChorus — Feature Specs & Implementation Plan (post-v0.0.1-beta)
 
-Status: PLANNING. Baseline = `main` @ b38c2cd (JUCE 8.0.4, clap-juce-extensions pinned, state version 2, 65 parameters).
+Status: IMPLEMENTED except the owner-gated items below (2026-10-14, PR "Feature audit + completion"). The text after this table is the original plan and is kept for reference.
+Original baseline = `main` @ b38c2cd (JUCE 8.0.4, clap-juce-extensions pinned, state version 2, 65 parameters); parameters are now 76 (see [PARAMETERS.md](PARAMETERS.md)).
+
+| ID | Status | Notes |
+|---|---|---|
+| X1 source refactor | Partly | New features live in `PluginProcessorFeatures.cpp`, `Dsp.h`, `PresetLibrary.h`, `EditorWidgets.h`; the big engine/editor files were not split further |
+| X2 CI hardening | Done | Linux job (tests, pluginval 8, clap-validator, ASan/UBSan, TSan), param-reference check, Windows packages as artifacts |
+| X3 golden renders | Not done | Replaced by behavioural tests (alignment, energy, spectral centroid, determinism); bit-exact goldens were judged too brittle across MSVC/GCC/Clang |
+| E1 longer sources, E2 keytrack alignment, E3 embedded audio, E6 undo, E7 manual, E8 diagnostics | Done (PR #4) | |
+| E4 signing / notarisation, E5 DAW matrix | Owner | Needs certificates and testers; `docs/DAW_TEST_MATRIX.md` and the `daw_bug` issue template are ready |
+| U1 simple view (PR #4), U2 preset browser, U4 smart capture, U5 swarm view, U6 MIDI learn | Done | |
+| U3 smarter targeting | Done | Next bar line, loop end, input transient (mock-host tested); see deviations in the audit report |
+| U7 accessibility | Done (metadata, keyboard, focus ring, high contrast) | Screen-reader verification pending; font scale is covered by window scaling |
+| V1 stems, V3 sidechain | Done | Outputs Swarm / Hit / Dry (sum = main) instead of Wet/Dry/pre-FX |
+| V2 export options | Done | No MP3 (not encodable by JUCE) |
+| V4 key detection | Dropped | See entry |
+| V5 preset banks | Done | `.pcbank`, validated on import |
+| V6 licensing, V7 Lite | Owner | Business decisions |
+| F1 themed randomize + locks | Done | History strip replaced by undo |
+| F2 morph | Done | |
+| F3 performance variations | Done | V1–V4 buttons, optional MIDI note switching |
+| F4 layers, F5 characters, F6 stutter, F7 demo source | Done | |
+| D1–D4 | Owner / partly | Parity: Windows + Linux + macOS CI; Linux ARM and notarisation outstanding |
+
 Audience: developers (human or AI agents). Each feature has a **Spec** (what/done-when) and a **Plan** (how/in what order).
 Items marked **[VERIFY]** are assumptions about current code that the implementer must confirm in the first 15 minutes (cheap grep) before building.
 
