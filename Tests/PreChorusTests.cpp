@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 #include <JuceHeader.h>
+#include <iostream>
 #include "../Source/PluginProcessor.h"
 #include "../Source/DemoSource.h"
 #include "../Source/Dsp.h"
@@ -834,7 +835,8 @@ public:
             expect (cd.first < before.first * 0.88);
             expectWithinAbsoluteError (cu.second, before.second, 12.0);   // pitch unchanged
             expectWithinAbsoluteError (cd.second, before.second, 12.0);
-            for (float v : up) expect (std::isfinite (v));
+            bool allFinite = true; for (float v : up) allFinite = allFinite && std::isfinite (v);
+            expect (allFinite);
         }
 
         beginTest ("slice scatter splits at transients and falls back to equal slices");
@@ -1455,10 +1457,17 @@ int main()
     runner.setAssertOnFailure (false);
     runner.runTestsInCategory ("PreChorus");
 
+    // JUCE only logs to the debugger on Windows, so print a console summary that CI (ctest --output-on-failure) can show.
     int failures = 0;
     for (int i = 0; i < runner.getNumResults(); ++i)
         if (const auto* result = runner.getResult (i))
+        {
             failures += result->failures;
+            std::cout << (result->failures == 0 ? "[ ok ] " : "[FAIL] ") << result->unitTestName << " / " << result->subcategoryName
+                      << " (" << result->passes << " passed, " << result->failures << " failed)" << std::endl;
+            for (auto& m : result->messages) std::cout << "         " << m << std::endl;
+        }
+    std::cout << "PreChorus tests: " << runner.getNumResults() << " groups, " << failures << " failed expectations" << std::endl;
 
     return runner.getNumResults() > 0 && failures == 0 ? 0 : 1;
 }
