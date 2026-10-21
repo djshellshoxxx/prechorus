@@ -100,7 +100,7 @@
 ## Build (Windows)
 1. Open PowerShell **as Administrator**:
    ```powershell
-   cd C:\Users\new\desktop\antigravityprojects\prechorus
+   cd <path-to-your-clone>
    .\build.ps1
    ```
 2. Automatically builds VST3, CLAP and Standalone targets and installs `PreChorus.vst3` to `C:\Program Files\Common Files\VST3` and `PreChorus.clap` to `C:\Program Files\Common Files\CLAP`.
@@ -124,3 +124,7 @@ PreChorus is currently distributed under the repository's proprietary license. S
 The product-specific source of truth is [docs/PRECHORUS_SPEC.md](docs/PRECHORUS_SPEC.md).
 
 This project also follows the [Circuit Drift Labs Shared Audio Plugin Standard](docs/standards/CDL_PLUGIN_BASELINE.md). The product specification supplements the shared standard and records profiles, compliance status, product-specific behavior, and planned work.
+
+## Wiki
+
+Wiki source pages are in [docs/wiki/](docs/wiki/Home.md): developer guide and codebase map. `docs/PRECHORUS_SPEC.md` is the product source of truth.
