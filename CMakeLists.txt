@@ -52,6 +52,7 @@ juce_generate_juce_header(PreChorus)
 
 target_sources(PreChorus PRIVATE
     Source/PluginProcessor.cpp
+    Source/PluginProcessorFeatures.cpp
     Source/PluginEditor.cpp)
 
 target_compile_definitions(PreChorus PUBLIC
@@ -74,6 +75,7 @@ if(PRECHORUS_BUILD_TESTS)
     target_sources(PreChorusTests PRIVATE
         Tests/PreChorusTests.cpp
         Source/PluginProcessor.cpp
+        Source/PluginProcessorFeatures.cpp
         Source/PluginEditor.cpp)
     target_compile_definitions(PreChorusTests PUBLIC
         JUCE_WEB_BROWSER=0

@@ -1,0 +1,4 @@
+# JUCE's bundled FLAC decoder left-shifts negative samples on every decode. This is undefined only on paper
+# (C++20 defines it; every supported compiler does an arithmetic shift), and it is third-party code.
+shift-base:juce_FlacAudioFormat.cpp
+shift-base:libFLAC
