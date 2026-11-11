@@ -1276,7 +1276,13 @@ public:
                 juce::String report;
                 const int nImp = other.importBank (bank, report); logMessage ("import: " + report);
                 expectEquals (nImp, 2);
-                expect (dir.getChildFile ("Other").getChildFile ("Banks").getChildFile ("My Bank").getChildFile ("Renamed Riser.pcpreset").existsAsFile());
+                {
+                    juce::String listing;
+                    for (auto& f : dir.getChildFile ("Other").findChildFiles (juce::File::findFiles, true, "*"))
+                        listing << f.getRelativePathFrom (dir) << " | ";
+                    expect (dir.getChildFile ("Other").getChildFile ("Banks").getChildFile ("My Bank").getChildFile ("Renamed Riser.pcpreset").existsAsFile(),
+                            "installed files: " + listing + " / report: " + report);
+                }
                 expectEquals ((int) other.filter ("", juce::StringArray { "User" }, false, 0).size(), 2);
                 juce::ValueTree a, b;
                 expect (PreChorusProcessor::parsePresetFile (files[0], a, err));
