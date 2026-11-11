@@ -242,7 +242,9 @@ public:
             juce::ValueTree snap; juce::String why;
             if (xml == nullptr || ! PreChorusProcessor::parsePresetXml (*xml, snap, why)) { ++skipped; continue; }
             if (! dest.createDirectory()) { report = "Could not create the bank folder."; return installed; }
-            const auto base = sanitizeFileName (juce::File::createFileWithoutCheckingPath (name).getFileNameWithoutExtension());
+            // split the zip entry path ourselves: File::createFileWithoutCheckingPath does not treat '/' as a separator on Windows
+            const auto leaf = name.replaceCharacter ('\\', '/').fromLastOccurrenceOf ("/", false, false);
+            const auto base = sanitizeFileName (leaf.upToLastOccurrenceOf (".", false, false));
             auto target = dest.getChildFile ((base.isEmpty() ? juce::String ("Preset") : base) + ".pcpreset");
             for (int k = 2; target.exists(); ++k) target = dest.getChildFile (base + " " + juce::String (k) + ".pcpreset");
             if (xml->writeTo (target)) ++installed; else ++skipped;
