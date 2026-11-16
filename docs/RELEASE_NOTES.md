@@ -1,6 +1,6 @@
 # PreChorus v0.0.1 beta — Release Notes
 
-**Status:** BETA. Windows x64. Proprietary — see LICENSE.
+**Status:** BETA. Windows x64 and Linux x64. Proprietary — see LICENSE.
 
 ## Downloads
 | File | What it is | Install |
@@ -48,3 +48,4 @@ All binaries use the static MSVC runtime (no Visual C++ redistributable needed).
 - Keytrack transposition also changes playback speed, so transposed notes move the hit away from the PDC-aligned position.
 - Loaded files are limited to the first 12 s; captures to 8 s (manual) / 12 s buffer.
 - macOS (AU/VST3/CLAP) builds are not part of this beta.
+- Linux builds (VST3, CLAP, Standalone; Ubuntu 22.04+ x64) pass the regression suite, pluginval (strictness 8) and clap-validator in CI/validation but have not been hand-tested in a Linux DAW.

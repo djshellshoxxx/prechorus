@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   windows-build:
@@ -20,3 +21,36 @@ jobs:
 
       - name: Run regression tests
         run: ctest --test-dir build -C Release --output-on-failure
+
+      # Packages the same files a release contains (installer, portable, VST3, CLAP) and uploads them as a
+      # downloadable workflow artifact. Nothing is published: a GitHub release is still made by release.yml.
+      - name: Stage and package
+        shell: pwsh
+        run: |
+          $base = (Select-String -Path CMakeLists.txt -Pattern 'project\(PreChorus VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $ver = "$base-build.${{ github.run_number }}"
+          $art = "build/PreChorus_artefacts/Release"
+          New-Item -ItemType Directory -Force stage, dist | Out-Null
+          Copy-Item "$art/VST3/PreChorus.vst3" stage -Recurse
+          Copy-Item "$art/CLAP/PreChorus.clap" stage
+          Copy-Item "$art/Standalone/PreChorus.exe" stage
+          Copy-Item LICENSE stage/LICENSE.txt
+          Copy-Item docs/RELEASE_NOTES.md stage/README.txt
+          Compress-Archive -Path stage/PreChorus.vst3, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-VST3.zip"
+          Compress-Archive -Path stage/PreChorus.clap, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-CLAP.zip"
+          Compress-Archive -Path stage/PreChorus.exe, stage/README.txt, stage/LICENSE.txt -DestinationPath "dist/PreChorus-v$ver-Windows-Portable.zip"
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+            $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          iscc /DAppVersion=$ver /DStage="$PWD\stage" /DOutDir="$PWD\dist" installer\PreChorus.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+          Get-FileHash dist/* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist/SHA256SUMS.txt
+          Get-ChildItem dist
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: PreChorus-Windows-${{ github.run_number }}
+          path: dist/*
+          if-no-files-found: error
